@@ -1,10 +1,4 @@
-"""
-Exercises the Gradio voice handler itself.
-
-The language-mode tests hit the API directly, which left voice_query untested —
-a missing `language` assignment shipped and only surfaced as a NameError when a
-Hinglish turn was recorded in the browser.
-"""
+"""Exercises the Gradio voice handler for every configured language."""
 import numpy as np
 import pytest
 

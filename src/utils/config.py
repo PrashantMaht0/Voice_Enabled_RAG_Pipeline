@@ -1,10 +1,4 @@
-"""
-Single source of truth for tunable parameters.
-
-Modules take their defaults from config/config.yaml at construction time, so a
-value can be changed in one place without touching code. Explicit arguments
-always win, which keeps tests independent of the file.
-"""
+"""Reads config/config.yaml; explicit arguments always win."""
 import os
 from functools import lru_cache
 

@@ -11,10 +11,7 @@ from src.prompts.prompt_template import (
 from src.utils.config import pick
 
 class LocalLLMClient:
-    """
-    Interface for local Ollama inference supporting streaming generation,
-    strict temperature constraints, and observability metrics.
-    """
+    """Local Ollama client for streaming, temperature-0 generation."""
 
     def __init__(
         self,
@@ -51,13 +48,7 @@ class LocalLLMClient:
             return query
 
     def normalize_query(self, query: str) -> str:
-        """
-        Turns a Hinglish question into an English search query.
-
-        Uses the larger model: the 1B rewriter echoed the prompt back instead of
-        translating. The reply is still parsed defensively — a small model that
-        starts explaining itself must not poison the search query.
-        """
+        """Turns a Hinglish question into an English search query."""
         try:
             response = self.client.chat(
                 model=self.generation_model,

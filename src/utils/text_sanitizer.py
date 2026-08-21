@@ -1,10 +1,4 @@
-"""
-Cleans generated answers for speech.
-
-The LLM cites its sources inline so the text answer stays auditable. Those markers
-are useless out loud — Kokoro reads an ISBN digit by digit — so the voice path
-strips them first. Kept separate from the UI so both the API and the UI can use it.
-"""
+"""Cleans generated answers for speech and inspects conversation history."""
 import re
 
 # Citation markers injected into every chunk at ingestion time (see chunking.py)
@@ -17,10 +11,7 @@ def strip_citation_headers(text: str) -> str:
 
 
 def has_incomplete_header(text: str) -> bool:
-    """
-    True while a citation marker is still being written at the tail.
-    Speaking before it closes leaks the source filename into the audio.
-    """
+    """True while a citation marker is still being written."""
     opened = text.rfind("[Source")
     return opened != -1 and "]" not in text[opened:]
 
@@ -34,10 +25,7 @@ def drop_incomplete_header(text: str) -> str:
 
 
 def sanitize_for_speech(text: str) -> str:
-    """
-    Full cleanup for TTS: drop citation markers, collapse the whitespace they
-    leave behind, and remove bullet glyphs that would be read aloud literally.
-    """
+    """Removes citation markers and stray glyphs before synthesis."""
     text = drop_incomplete_header(strip_citation_headers(text))
     text = text.replace("", " ")          # PDF bullet glyph
     text = re.sub(r"[ \t]{2,}", " ", text)
@@ -46,8 +34,7 @@ def sanitize_for_speech(text: str) -> str:
     return text.strip()
 
 
-# A refusal asserts no facts. It must never be used as conversational context for
-# rewriting a follow-up, and it must never be scored for faithfulness.
+# A refusal asserts no facts, so it is never reused as context or scored.
 REFUSAL_MARKERS = (
     "insufficient context",
     "i cannot find sufficient information",
@@ -69,13 +56,7 @@ def has_non_latin(text: str) -> bool:
 
 
 def usable_history(history):
-    """
-    Drops turns whose answer was a refusal, along with the question that produced it.
-
-    A refused turn carries no retrievable subject, so feeding it to the rewriter makes
-    the next question inherit a dead topic — and, if it was asked in another language,
-    a dead topic in the wrong script.
-    """
+    """Drops refused turns and the questions that produced them."""
     kept = []
     for turn in history or []:
         if turn.get("role") == "assistant" and is_refusal(turn.get("content", "")):

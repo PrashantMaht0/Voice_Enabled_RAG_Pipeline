@@ -1,10 +1,4 @@
-"""
-Hinglish speech synthesis with F5-TTS.
-
-F5-TTS is zero-shot voice cloning: every call needs a short reference clip plus
-that clip's exact transcript. The reference here is a code-switched sample from
-ujs/hinglish (OpenSLR-104), so the cloned voice speaks Hinglish natively.
-"""
+"""Experimental Hinglish speech synthesis with F5-TTS."""
 import os
 
 import numpy as np
@@ -38,8 +32,7 @@ class F5HinglishTTS:
             with open(ref_text_path, encoding="utf-8") as f:
                 self.ref_text = f.read().strip()
 
-        # Flow-matching steps. Cost is linear: on this CPU 32 steps run at RTF 11.6x,
-        # 16 at 5.8x, 8 at 2.9x. Fewer steps means faster but rougher audio.
+        # Flow-matching steps: fewer is faster but rougher.
         self.nfe_step = pick(nfe_step, "voice.languages.hinglish.f5.nfe_step", 16)
         self.sample_rate = 24000        # F5-Hindi-24KHz
         self.model = None
@@ -52,8 +45,7 @@ class F5HinglishTTS:
         else:
             print("[TTS-F5] Loading F5-TTS Hinglish...")
             try:
-                # The checkpoint is F5-TTS Small (dim 768, depth 18, heads 12) per the
-                # model card; the default F5TTS_v1_Base architecture would not load it.
+                # The checkpoint is F5-TTS Small; the default architecture will not load it.
                 self.model = F5TTS(model="F5TTS_Small", ckpt_file=self.ckpt_file,
                                    vocab_file=self.vocab_file, device="cpu")
             except Exception as e:

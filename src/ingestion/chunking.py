@@ -3,10 +3,7 @@ from typing import List, Dict
 from src.utils.config import pick
 
 class DocumentChunker:
-    """
-    Splits normalized documents into overlapping token-aware chunks.
-    Ensures small local LLMs do not exceed context windows and maintain citation maps.
-    """
+    """Splits documents into overlapping token-aware chunks."""
     def __init__(self, chunk_size: int = None, overlap: int = None, encoding_name: str = "cl100k_base"):
         self.chunk_size = pick(chunk_size, "ingestion.chunk_size", 500)
         self.overlap = pick(overlap, "ingestion.chunk_overlap", 50)
@@ -44,8 +41,7 @@ class DocumentChunker:
             text_chunks = self.split_text(text)
             
             for i, chunk_str in enumerate(text_chunks):
-                # Inject a citation marker explicitly into the chunk payload 
-                # to enforce strict grounding during LLM generation.
+                # Inject a citation marker so the answer can be traced to its source.
                 augmented_chunk_text = f"[Source: {source} | Chunk: {i}]\n{chunk_str}"
                 
                 all_chunks.append({

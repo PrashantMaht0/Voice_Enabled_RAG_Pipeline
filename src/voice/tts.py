@@ -33,10 +33,7 @@ class KokoroTTS:
             print("[TTS] WARNING: kokoro-onnx not installed. Running in mock mode.")
 
     def synthesize_array(self, text: str, voice: str = None):
-        """
-        Same synthesis as synthesize(), but returns (sample_rate, int16 array).
-        WebRTC transports need the sample rate alongside the samples.
-        """
+        """Synthesizes speech and returns (sample_rate, int16 array)."""
         if not text.strip():
             return self.sample_rate, np.zeros(0, dtype=np.int16)
 
@@ -51,35 +48,3 @@ class KokoroTTS:
         )
         self.sample_rate = sample_rate
         return sample_rate, float32_to_int16(samples)
-
-    def synthesize(self, text: str, voice: str = None) -> bytes:
-        """
-        Synthesizes a single text string (like a completed sentence) into 
-        raw 16-bit PCM bytes for WebRTC transmission.
-        """
-        if not text.strip():
-            return b""
-            
-        if not self.model:
-            # Mock bypass: Generate 0.5 seconds of silent audio bytes
-            mock_audio = np.zeros(16000 // 2, dtype=np.int16)
-            return mock_audio.tobytes()
-
-        target_voice = voice if voice else self.default_voice
-
-        try:
-            # Create audio using the Kokoro model (returns a float32 numpy array and sample rate)
-            samples, sample_rate = self.model.create(
-                text, 
-                voice=target_voice, 
-                speed=1.0, 
-                lang="en-us"
-            )
-            
-            # Convert float32 array to 16-bit PCM integer for WebRTC compatibility
-            pcm_16_audio = float32_to_int16(samples)
-            return pcm_16_audio.tobytes()
-            
-        except Exception as e:
-            print(f"[TTS] Synthesis failed: {e}")
-            return b""

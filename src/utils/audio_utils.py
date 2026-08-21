@@ -1,10 +1,7 @@
 import numpy as np
 
 def resample_audio(audio_data: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
-    """
-    Resamples audio to a target sample rate. 
-    Models like Silero VAD and Whisper require a strict 16kHz sample rate.
-    """
+    """Resamples audio to the target sample rate."""
     if orig_sr == target_sr:
         return audio_data
         
@@ -24,18 +21,12 @@ def resample_audio(audio_data: np.ndarray, orig_sr: int, target_sr: int = 16000)
         ).astype(audio_data.dtype)
 
 def int16_to_float32(audio_data: np.ndarray) -> np.ndarray:
-    """
-    Converts 16-bit PCM integer audio to 32-bit float arrays.
-    Required for feeding microphone data into Torch/Whisper pipelines.
-    """
+    """Converts 16-bit PCM audio to 32-bit float."""
     # Normalize by dividing by the maximum 16-bit integer value
     return audio_data.astype(np.float32) / 32768.0
 
 def float32_to_int16(audio_data: np.ndarray) -> np.ndarray:
-    """
-    Converts 32-bit float audio (e.g., from Kokoro TTS) back to 16-bit PCM.
-    Required for streaming audio back to the user's browser via WebRTC.
-    """
+    """Converts 32-bit float audio to 16-bit PCM."""
     # Clip to prevent distortion/clipping, then scale up
     clipped = np.clip(audio_data, -1.0, 1.0)
     return (clipped * 32767).astype(np.int16)

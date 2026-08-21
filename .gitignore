@@ -18,6 +18,5 @@ data/eval/last_run_scores.csv
 
 scripts
 models
-run.sh
 #---- macOS
 .DS_Store

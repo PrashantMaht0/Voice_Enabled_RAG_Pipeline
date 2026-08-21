@@ -89,8 +89,7 @@ def test_config_declares_both_language_modes():
     assert langs["hinglish"]["normalize_query"] is True
     assert langs["english"]["normalize_query"] is False
 
-    # Hinglish transcribes with its own STT but speaks through Kokoro: the F5 voice
-    # is not intelligible, so it stays opt-in. See README.
+    # Hinglish uses its own STT but speaks through Kokoro; F5 stays opt-in.
     assert langs["hinglish"]["stt_model"].endswith("zero-stt-hinglish-ct2")
     assert langs["hinglish"]["tts_backend"] == "kokoro"
 
@@ -101,10 +100,7 @@ from src.llm.llm_client import LocalLLMClient
 
 
 def test_hindi_function_words_are_not_treated_as_products():
-    """
-    'matlab' means 'meaning'. The first prompt told the model to preserve product
-    names, so it kept MATLAB and the query became "...and what is Matlab?".
-    """
+    """'matlab' means 'meaning' and must not be read as the product MATLAB."""
     from src.prompts.prompt_template import NORMALIZE_QUERY_PROMPT
 
     prompt = NORMALIZE_QUERY_PROMPT.format(query="Azure mai Resources ka kya matlab hota hai")

@@ -22,8 +22,7 @@ router = APIRouter()
 
 RAW_DIR = "data/raw"
 
-# Heavy models (embedder, Qdrant handle, Tantivy index, cross-encoder, spacy NER)
-# are loaded once per process. Rebuilding them per request cost ~2.5s a query.
+# Heavy models are loaded once per process, not per request.
 _retriever = None
 _llm = None
 _guard = None
@@ -58,8 +57,7 @@ def get_cache() -> QueryCache:
     global _cache
     if _cache is None:
         _cache = QueryCache(
-            # Resolved on first semantic lookup so the cache never forces the
-            # retrieval stack to be constructed (tests stub it out).
+            # Resolved lazily so the cache never forces the retrieval stack to load.
             embedder_provider=lambda: get_retriever().store.db_manager.embedder,
             raw_dir=RAW_DIR,
             max_entries=get("cache.max_entries", 256),
@@ -79,20 +77,14 @@ def warmup():
 class QueryRequest(BaseModel):
     query: str
     session_id: str = "default_session"
-    # Prior turns as [{"role": "user"|"assistant", "content": str}]. Used only to
-    # resolve pronouns into a standalone search query.
+    # Prior turns, used only to resolve pronouns into a standalone query.
     history: List[Dict[str, str]] = []
-    # Language the question was asked in. Retrieval is English-only, so anything
-    # else is normalised to English first.
+    # Retrieval is English-only, so other languages are normalised first.
     language: str = "english"
 
 
 def build_citations(chunks: List[str]) -> List[Dict[str, str]]:
-    """
-    Provenance derived from the chunks that were actually used. Deterministic:
-    llama3.2:3b will not place inline citations reliably, and any tag it invents
-    has to be thrown away anyway (see HallucinationGuard.strip_ungrounded_citations).
-    """
+    """Provenance derived from the chunks that were actually retrieved."""
     seen, citations = set(), []
     for chunk in chunks:
         match = SOURCE_HEADER.match(chunk)
@@ -107,13 +99,7 @@ def build_citations(chunks: List[str]) -> List[Dict[str, str]]:
 
 
 def append_citations(answer: str, citations: List[Dict[str, str]]) -> str:
-    """
-    Guarantees the answer carries its provenance.
-
-    llama3.2:3b emits an inline [Source: ...] tag on fewer than half of its answers
-    even when the prompt demands one, so the tags are appended deterministically from
-    the chunks that were actually retrieved. The speech path strips them again.
-    """
+    """Appends source tags the model failed to emit itself."""
     if not citations or not answer.strip():
         return answer
 
@@ -130,8 +116,7 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
     """Resolves follow-up pronouns, then normalises to English if needed."""
     search_query = request.query
 
-    # Refused turns carry no subject: rewriting against them drags the next question
-    # onto a dead topic, and onto the wrong language if that turn was not English.
+    # Refused turns carry no subject and would drag the next question off topic.
     history = usable_history(request.history)
 
     if history:
@@ -141,9 +126,7 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
         if tracer:
             tracer.end_span("rewrite", f"Standalone query — {search_query!r}")
 
-    # Normalise when the mode says to, or whenever anything non-English survived the
-    # rewrite — a Hinglish turn earlier in the conversation can leak into a later
-    # English question.
+    # Normalise when the mode says to, or when non-English text survived the rewrite.
     if get(f"voice.languages.{request.language}.normalize_query", False) or has_non_latin(search_query):
         if tracer:
             tracer.start_span("normalize")
@@ -154,10 +137,7 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
     return search_query
 
 def trigger_ingestion_pipeline():
-    """
-    Background task to process raw documents into normalized chunks 
-    and index them into the dense and sparse vector databases.
-    """
+    """Rebuilds both indexes from every document in data/raw."""
     print("[Ingestion] Starting vectorization...")
     try:
         # 1. Load and normalize texts
@@ -168,13 +148,10 @@ def trigger_ingestion_pipeline():
         chunker = DocumentChunker()
         chunks = chunker.chunk_documents(documents)
         
-        # 3. Upsert to Qdrant (Dense) and Tantivy (Sparse).
-        # Reuses the process-wide manager: embedded Qdrant holds an exclusive
-        # file lock, so a second VectorDBManager here would fail.
+        # Reuses the process-wide manager: embedded Qdrant is single-handle.
         db_manager = get_retriever().store.db_manager
         if not chunks:
-            # Nothing left in data/raw. Clear both stores, or BM25 keeps serving
-            # text from documents the user has deleted.
+            # Clear both stores, or BM25 keeps serving deleted documents.
             db_manager.reset_indexes()
             get_cache().invalidate("corpus emptied")
             print("[Ingestion] Corpus is empty — indexes cleared.")
@@ -261,10 +238,7 @@ async def list_corpus():
 
 @router.delete("/corpus/{filename:path}")
 async def delete_document(filename: str):
-    """
-    Removes a source file and rebuilds both indexes from whatever remains.
-    Rebuilding is synchronous so the corpus listing is truthful on return.
-    """
+    """Removes a source file and rebuilds the indexes from what remains."""
     safe_name = os.path.basename(filename)
     file_path = os.path.join(RAW_DIR, safe_name)
 
@@ -367,10 +341,7 @@ async def manual_query(request: QueryRequest):
 
 @router.post("/query/stream")
 async def stream_query(request: QueryRequest):
-    """
-    Same retrieval and gate as /query, but emits ndjson so a caller can start
-    speaking on the first finished sentence instead of waiting for the full answer.
-    """
+    """Same retrieval and gate as /query, but streams tokens as ndjson."""
     retriever = get_retriever()
     tracer = PipelineTracer()
     search_query = resolve_search_query(request, tracer)

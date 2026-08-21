@@ -9,10 +9,7 @@ except ImportError:
 
 
 class DenseEmbedder:
-    """
-    Generates L2-normalized dense vector embeddings for semantic similarity search.
-    Utilizes BAAI/bge-small-en-v1.5 for low-latency dense representations.
-    """
+    """Generates L2-normalized embeddings for semantic search."""
     def __init__(self, model_name: str = None, device: str = "cpu"):
         self.model_name = pick(model_name, "retrieval.dense_model", "BAAI/bge-small-en-v1.5")
         self.device = device

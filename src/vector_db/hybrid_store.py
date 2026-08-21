@@ -3,13 +3,9 @@ from src.vector_db.vector_store import VectorDBManager, QDRANT_INSTALLED, TANTIV
 from src.utils.config import pick
 
 class HybridStore:
-    """
-    Executes searches against both Tantivy (BM25) and Qdrant (HNSW), 
-    merging the results into a single candidate pool.
-    """
+    """Runs sparse and dense search and fuses the results."""
     def __init__(self, hybrid_alpha: float = None, db_manager: VectorDBManager = None):
-        # Embedded Qdrant takes an exclusive file lock, so callers that already
-        # hold a manager (tests, the API singleton) pass theirs in.
+        # Embedded Qdrant is single-handle, so callers may inject their manager.
         self.db_manager = db_manager or VectorDBManager()
         self.hybrid_alpha = pick(hybrid_alpha, "retrieval.hybrid_alpha", 0.5)
 
@@ -75,10 +71,7 @@ class HybridStore:
         return sparse_results
 
     def search(self, query: str, top_k: int = 30) -> List[Dict]:
-        """
-        Executes both search paths concurrently and fuses them via 
-        Reciprocal Rank Fusion (RRF) for the reranker.
-        """
+        """Searches both engines and fuses the results."""
         # Execute queries (in a fully optimized production setup, use asyncio/threads here)
         dense_results = self.search_dense(query, top_k)
         sparse_results = self.search_sparse(query, top_k)
@@ -86,11 +79,7 @@ class HybridStore:
         return self.fuse(dense_results, sparse_results, top_k)
 
     def fuse(self, dense_results: List[Dict], sparse_results: List[Dict], top_k: int = 30) -> List[Dict]:
-        """
-        Merges already-fetched dense and sparse candidates via Reciprocal Rank Fusion (RRF).
-        Kept separate from search() so callers that already hold both result sets
-        do not have to re-run the queries.
-        """
+        """Merges pre-fetched dense and sparse candidates via RRF."""
         if not dense_results and not sparse_results:
             # Mock candidate block if local DBs are empty during testing
             return [{
@@ -99,8 +88,7 @@ class HybridStore:
                 "metadata": {"source": "mock_doc.pdf"}
             }]
 
-        # Reciprocal Rank Fusion (RRF)
-        # RRF formula: Score = 1 / (rank + 60)
+        # Reciprocal Rank Fusion: score = 1 / (rank + 60).
         rrf_scores = {}
         unified_pool = {}
 

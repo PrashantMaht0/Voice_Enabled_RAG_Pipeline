@@ -6,10 +6,7 @@ logger = logging.getLogger("rag_tracer")
 logger.setLevel(logging.INFO)
 
 class PipelineTracer:
-    """
-    Centralized tracer to capture granular RAG pipeline metrics and 
-    print them in a strictly formatted console output.
-    """
+    """Records per-stage latency for one request."""
     def __init__(self):
         self.traces: Dict[str, Dict[str, Any]] = {}
         self.start_times: Dict[str, float] = {}

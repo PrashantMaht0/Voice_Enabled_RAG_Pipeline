@@ -1,8 +1,4 @@
-"""
-Reproduces the reported failure: a Hinglish turn that was refused poisoned the
-following English question, so a query the system answers fine on its own came
-back as "Insufficient context".
-"""
+"""A refused Hinglish turn must not poison the following English question."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

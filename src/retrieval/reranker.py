@@ -7,10 +7,7 @@ except ImportError:
     FLASHRANK_INSTALLED = False
 
 class CrossEncoderReranker:
-    """
-    Implements a two-stage retrieval cross-encoder. Scores the exact overlap 
-    and semantic relationships between the query and candidate document chunks jointly.
-    """
+    """Scores query and chunk jointly to reorder retrieval candidates."""
     def __init__(self, model_name: str = None, cache_dir: str = "/tmp"):
         self.model_name = pick(model_name, "retrieval.reranker_model", "ms-marco-MiniLM-L-12-v2")
         self.ranker = None

@@ -26,8 +26,7 @@ custom_css = """
 """
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-# STT and TTS live in the UI process; the API process owns retrieval and the LLM.
-# Cached per language: switching modes should not reload a model already in memory.
+# Speech models live in the UI process, cached per language.
 _stt = {}
 _tts = {}
 
@@ -61,18 +60,10 @@ def get_tts(language=DEFAULT_LANGUAGE):
 
 
 def voice_query(audio, history, language_label=None):
-    """
-    Press Record, speak, press Stop. The recording is transcribed, sent through the
-    same RAG path as a typed question, and the answer is spoken back.
-
-    This replaces fastrtc's ReplyOnPause: pause-detection cut answers off whenever
-    background noise arrived, and a WebRTC stream handler cannot write to the
-    dashboard panels, so voice turns produced no telemetry.
-    """
+    """Transcribes a recording, answers it, and speaks the answer back."""
     history = history or []
     language = language_key(language_label) if language_label else DEFAULT_LANGUAGE
-    # Must match ask_outputs + voice_reply exactly: state, transcript, input,
-    # trace, sources, 4 metric cards, spoken reply.
+    # Must match ask_outputs + voice_reply exactly.
     blank = (history, history, "", "", "_No audio captured._", *blank_metrics(), None)
 
     if audio is None:

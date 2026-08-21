@@ -8,11 +8,7 @@ from src.vector_db.hybrid_store import HybridStore
 
 @pytest.fixture(autouse=True)
 def isolated_cache(monkeypatch):
-    """
-    The query cache is a process-wide singleton, so without this one test's answer
-    is served to the next. Unit tests exercise the uncached path; cache behaviour
-    is covered directly in tests/cache_test.py.
-    """
+    """The cache is a process-wide singleton, so each test gets a disabled one."""
     monkeypatch.setattr(routes, "_cache", QueryCache(enabled=False))
 
 SAMPLE_CHUNKS = [

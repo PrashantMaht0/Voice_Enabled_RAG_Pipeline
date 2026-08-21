@@ -114,10 +114,7 @@ def test_lru_eviction_bounds_memory(corpus):
 
 
 def test_semantic_layer_can_serve_a_neighbour_after_exact_eviction(corpus):
-    """
-    Deliberate behaviour: eviction removes an exact key, but a semantically
-    equivalent entry still answers. The cache trades key identity for reuse.
-    """
+    """After eviction, a semantically equivalent entry still answers."""
     cache = make_cache(corpus, max_entries=2, similarity_threshold=0.9)
     cache.put("resource group explained", {"answer": "container"})
     cache.put("resource group meaning", {"answer": "container"})

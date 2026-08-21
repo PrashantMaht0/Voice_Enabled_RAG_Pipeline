@@ -4,10 +4,7 @@ from src.retrieval.reranker import CrossEncoderReranker
 from src.utils.config import pick
 
 class HybridRetriever:
-    """
-    Orchestrates the SYNCHRONIC retrieval flow: 
-    Hybrid Retrieval -> Reranking -> Confidence Gating
-    """
+    """Hybrid retrieval, cross-encoder reranking and the confidence gate."""
     def __init__(self, confidence_threshold: float = None, top_k_rerank: int = None,
                  top_k_candidates: int = None, top_k_retrieval: int = None):
         self.store = HybridStore()
@@ -15,8 +12,7 @@ class HybridRetriever:
         self.confidence_threshold = pick(confidence_threshold, "retrieval.confidence_threshold", 0.65)
         self.top_k_rerank = pick(top_k_rerank, "retrieval.top_k_rerank", 3)
         self.top_k_retrieval = pick(top_k_retrieval, "retrieval.top_k_retrieval", 30)
-        # Cross-encoder cost is linear in the pool size: 30 candidates cost ~1850ms,
-        # 12 cost ~700ms with no measured recall loss on the golden set.
+        # Cross-encoder cost is linear in pool size, so the pool stays small.
         self.top_k_candidates = pick(top_k_candidates, "retrieval.top_k_rerank_pool", 12)
 
     def search_and_rerank(self, query: str, tracer: Optional[Any] = None) -> Tuple[List[str], float]:

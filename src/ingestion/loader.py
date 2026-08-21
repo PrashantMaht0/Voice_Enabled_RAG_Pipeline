@@ -6,18 +6,12 @@ from pypdf import PdfReader
 from src.utils.config import pick
 
 class DocumentLoader:
-    """
-    Handles ingestion and strict normalization of raw text, markdown, and PDF files.
-    Applies Unicode NFC normalization to prevent BM25 silent search failures.
-    """
+    """Loads and normalizes PDF, text and markdown files."""
     def __init__(self, raw_data_dir: str = None):
         self.raw_data_dir = pick(raw_data_dir, "paths.raw_data_dir", "data/raw")
 
     def _normalize_text(self, text: str) -> str:
-        """
-        Cleans the document text by normalizing unicode characters, stripping
-        zero-width spaces, and resolving multi-space artifacts.
-        """
+        """Normalizes Unicode and strips control characters and stray whitespace."""
         # 1. Normalize Unicode (NFC normalization: 'é' and 'é' become identical bytes)
         normalized = unicodedata.normalize("NFC", text)
         
@@ -53,10 +47,7 @@ class DocumentLoader:
             return ""
 
     def load_documents(self) -> List[Dict[str, str]]:
-        """
-        Iterates over the raw data directory, parses documents, and tags 
-        them with source metadata for precise citations later.
-        """
+        """Parses every supported file in the raw directory."""
         documents = []
         if not os.path.exists(self.raw_data_dir):
             return documents

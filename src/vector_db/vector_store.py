@@ -18,10 +18,7 @@ except ImportError:
     TANTIVY_INSTALLED = False
 
 class VectorDBManager:
-    """
-    Manages the lifecycle and schemas for both the Qdrant (Dense) 
-    and Tantivy (Sparse) databases.
-    """
+    """Owns the Qdrant and Tantivy index lifecycle."""
     def __init__(
         self, 
         qdrant_path: str = None,
@@ -52,8 +49,7 @@ class VectorDBManager:
         self._ensure_collection()
 
     def _ensure_collection(self):
-        """Creates the collection if it is missing. Reuses the existing client:
-        a second QdrantClient on the same path fails, embedded Qdrant is single-handle."""
+        """Creates the collection if missing, reusing the existing client."""
         collections = [col.name for col in self.qdrant_client.get_collections().collections]
         if self.collection_name not in collections:
             self.qdrant_client.create_collection(
@@ -100,10 +96,7 @@ class VectorDBManager:
             self.tantivy_index.reload()
 
     def ingest_chunks(self, chunks: List[Dict]):
-        """
-        Takes tokenized chunks with metadata and indexes them into 
-        both sparse and dense stores simultaneously.
-        """
+        """Indexes chunks into both the dense and sparse stores."""
         if not chunks:
             return
 
@@ -112,9 +105,7 @@ class VectorDBManager:
 
         # 1. Upload to Qdrant
         if self.qdrant_client:
-            # Chunk ids are positional (chunk_0, chunk_1, ...), so a corpus that
-            # shrinks or is re-chunked leaves orphaned points behind. This path
-            # always reindexes everything, so clear first.
+            # Chunk ids are positional, so a re-chunked corpus leaves orphans behind.
             self.qdrant_client.delete_collection(collection_name=self.collection_name)
             self._ensure_collection()
 
@@ -143,8 +134,7 @@ class VectorDBManager:
         # 2. Upload to Tantivy
         if self.tantivy_index:
             writer = self.tantivy_index.writer()
-            # This path always reindexes the full corpus, so clear first.
-            # Tantivy has no upsert: re-adding would duplicate every BM25 document.
+            # Tantivy has no upsert, so re-adding would duplicate every document.
             writer.delete_all_documents()
             for chunk in chunks:
                 doc = tantivy.Document()

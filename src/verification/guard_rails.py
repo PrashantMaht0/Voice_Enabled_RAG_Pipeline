@@ -12,10 +12,7 @@ except ImportError:
     SPACY_INSTALLED = False
 
 class HallucinationGuard:
-    """
-    Acts as the final barrier before rendering audio. Uses strict Assertion Extraction 
-    and Named Entity Recognition to verify that all factual claims exist in the retrieved context.
-    """
+    """Verifies generated claims against the retrieved source text."""
     def __init__(self, fallback_message: str = None):
         self.fallback_message = pick(fallback_message, "verification.fallback_message",
                                      "The provided documents do not contain sufficient information.")
@@ -59,13 +56,7 @@ class HallucinationGuard:
         return assertions
 
     def strip_ungrounded_citations(self, generated_text: str, context_chunks: List[str]) -> Tuple[str, List[str]]:
-        """
-        Removes [Source: ... | Chunk: n] markers pointing at chunks that were never
-        retrieved. Small models mis-copy the chunk number out of the context header,
-        which reads as an invented source even when the surrounding prose is grounded.
-
-        Returns the cleaned text and the markers that were dropped.
-        """
+        """Removes citation markers pointing at chunks that were never retrieved."""
         grounded = {
             match.groups()
             for chunk in context_chunks
@@ -91,12 +82,7 @@ class HallucinationGuard:
         return cleaned.strip(), removed
 
     def verify_assertions(self, generated_text: str, context_chunks: List[str]) -> bool:
-        """
-        Validates whether extracted entities and assertions in the generation 
-        actually appear in the source chunks.
-        
-        Returns True if safe, False if an ungrounded assertion is detected.
-        """
+        """True when every extracted claim appears in the source text."""
         if not self.nlp:
              # Mock mode: assume safe
             return True

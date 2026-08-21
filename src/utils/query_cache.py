@@ -1,18 +1,4 @@
-"""
-Two-level query cache with corpus-change invalidation.
-
-Level 1 is an exact match on the resolved search query. Level 2 falls back to a
-cosine-similarity lookup over cached query embeddings, so paraphrases hit too.
-
-Entries are keyed on the query *after* rewriting and English normalization, which
-means a Hinglish question and its English equivalent resolve to the same entry.
-Generation runs at temperature 0, so a cached answer is the answer the pipeline
-would have produced.
-
-Invalidation is driven by a fingerprint of the source directory (name, size, mtime).
-It is checked on every lookup, so a document added, replaced or removed — whether
-through the API or by editing the folder directly — drops the cache immediately.
-"""
+"""Two-level query cache invalidated whenever the corpus changes."""
 import hashlib
 import os
 import threading
@@ -42,9 +28,7 @@ class QueryCache:
     def __init__(self, embedder=None, raw_dir: str = "data/raw", max_entries: int = 256,
                  similarity_threshold: float = 0.95, enabled: bool = True,
                  embedder_provider=None):
-        # The embedder may be resolved lazily: the cache is constructed before the
-        # retrieval stack is guaranteed to exist, and callers that supply neither
-        # simply get an exact-match cache.
+        # Without an embedder the cache still works, as exact-match only.
         self.embedder = embedder
         self.embedder_provider = embedder_provider
         self.raw_dir = raw_dir

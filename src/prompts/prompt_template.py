@@ -1,7 +1,4 @@
-"""
-Prompt templates enforcing strict grounding, zero-extrapolation constraints,
-and conversational query resolution.
-"""
+"""Prompt templates enforcing grounded, zero-extrapolation answers."""
 
 from typing import List, Dict
 
@@ -10,9 +7,7 @@ FALLBACK_RESPONSE = (
     "I cannot find sufficient information in the documentation to answer your question."
 )
 
-# ---------------------------------------------------------------------------
-# Strict RAG System Prompt
-# ---------------------------------------------------------------------------
+# Strict RAG system prompt.
 SYSTEM_RAG_PROMPT = """You are an authoritative technical support assistant.
 Answer the user's question using ONLY the provided context snippets below.
 
@@ -31,9 +26,7 @@ STRICT OPERATIONAL RULES:
    column headings. No conversational filler (e.g., "Sure, I can help").
 """
 
-# ---------------------------------------------------------------------------
-# Conversational Query Rewriter Prompt (Coreference Resolution)
-# ---------------------------------------------------------------------------
+# Rewrites a follow-up question into a standalone one.
 QUERY_REWRITE_PROMPT = """Given the recent conversation history and a follow-up question, rewrite the follow-up question into a standalone, unambiguous search query for documentation retrieval.
 
 Rules:
@@ -83,15 +76,7 @@ def format_chat_history(history: List[Dict[str, str]], max_turns: int = 3) -> st
     return "\n".join(formatted)
 
 
-# ---------------------------------------------------------------------------
-# Cross-language query normalisation
-# ---------------------------------------------------------------------------
-# The corpus, the BM25 tokenizer and the bge-small-en embeddings are all English.
-# A Hinglish question therefore has to become an English search query before it
-# reaches the index, or retrieval degrades badly.
-# Deliberately terse. A longer, few-shot version made llama3.2:1b echo the
-# instructions back instead of answering, so the rules are compressed and the
-# caller uses the larger model plus defensive parsing.
+# Translates a Hinglish question into an English search query.
 NORMALIZE_QUERY_PROMPT = """Translate this Hinglish question to English. Hindi words are ordinary words, not product names
 (matlab=meaning, kya=what, kaise=how, kaun=which, hota hai=is, ke liye=for, mein=in, ka=of).
 Keep error codes, numbers and product names as written.
