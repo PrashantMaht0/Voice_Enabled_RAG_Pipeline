@@ -1,7 +1,7 @@
-# V-RAG — Enterprise Voice-Enabled RAG Pipeline
+# V-RAG: Enterprise Voice-Enabled RAG Pipeline
 
 A low-latency, zero-hallucination question-answering system for your own documents. Ask by typing or
-by speaking, in English or Hinglish, and get an answer drawn only from the documents you supplied —
+by speaking, in English or Hinglish(Hindi + English), and get an answer drawn only from the documents you supplied —
 with the sources it used.
 
 Everything runs on your machine. No cloud APIs, no vendor keys, no data leaving the laptop.
