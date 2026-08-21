@@ -31,7 +31,21 @@ The framework supplied the ten design principles above; this repository is an in
 implementation of them on a fully local stack.
 
 ---
+## Project Screen Shots
 
+- Main Console 
+  ![Main Console](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Main_dashboard.png)
+
+- Corpus Tab
+  ![Corpus Tab](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Corpus_Tab.png)
+
+- Engish Audio Query Result 
+  ![English Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/English_query_res.png)
+
+- Hinglish Audio Query Result
+  ![Hinglish Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Hinglish_query_res.png)
+
+---
 ## Repository Layout
 
 ```
@@ -93,7 +107,7 @@ Voice_Enabled_RAG_Pipeline/
 
 ## Architecture
 
-![V-RAG architecture](assest/RAG_Architecture.png)
+![V-RAG architecture](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/RAG_Architecture.png)
 
 A question travels through the pipeline in stages. Each stage can stop it: if the documents don't
 contain a trustworthy answer, the system refuses rather than inventing one.
@@ -280,5 +294,3 @@ docker compose up
   embedding model would lift that limit.
 - **Running on a GPU.** Would take spoken replies from seconds to well under one, and is the only way
   to reach the original sub-second target.
-- **Sharing the cache.** The cache currently lives inside one process; a shared cache would let
-  several copies of the app benefit from each other's answers.
