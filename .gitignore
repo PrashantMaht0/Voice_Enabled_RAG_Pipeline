@@ -1,0 +1,23 @@
+#---- Temporay files --- 
+temp.md
+errors.md
+sample_support.md
+
+#----- envirnoment files
+.env
+
+#---- cache 
+__pycache__
+vectordb/
+data/raw/
+
+#---- evaluation venv
+eval-env/
+dev-env/
+data/eval/last_run_scores.csv
+
+scripts
+models
+run.sh
+#---- macOS
+.DS_Store

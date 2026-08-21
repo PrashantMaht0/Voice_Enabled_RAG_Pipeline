@@ -1,0 +1,66 @@
+# --- API & frontend ---
+fastapi==0.141.1
+uvicorn==0.52.3
+python-multipart==0.0.32        
+gradio==5.50.0
+pydantic==2.12.3
+requests==2.34.2
+
+# --- LLM client ---
+ollama==0.6.2
+
+# --- Vector DBs & sparse search ---
+qdrant-client==1.19.0
+tantivy==0.26.0
+
+# --- Embeddings & cross-encoder reranking ---
+sentence-transformers==6.0.0
+FlashRank==0.2.10
+
+# --- Voice: VAD, STT, TTS ---
+torch==2.13.0
+torchaudio==2.11.0              
+faster-whisper==1.2.1
+kokoro-onnx==0.5.0
+onnxruntime==1.29.0
+soundfile==0.14.0
+librosa==1.0.0
+numpy==2.5.2
+
+# --- Document ingestion & chunking ---
+pypdf==6.16.1
+tiktoken==0.14.0
+
+# --- Guardrails (spacy model installed separately, see header) ---
+spacy==3.8.15
+
+# --- Configuration ---
+PyYAML==6.0.3
+
+# --- Testing ---
+pytest==9.1.1
+
+
+# =============================================================================
+# EVALUATION EXTRAS — INSTALL IN A SEPARATE VIRTUALENV, NOT THIS ONE.
+# =============================================================================
+# Ragas pulls langchain 0.3.x; the versions above are a langchain-1.x-era stack.
+# Installing both together downgrades langchain-core and breaks ragas' own
+# imports, so the quality gate gets its own environment:
+#
+#   python -m venv eval-env
+#   ./eval-env/bin/pip install ragas==0.2.15 langchain==0.3.30 \
+#       langchain-core==0.3.86 langchain-community==0.3.27 \
+#       langchain-openai==0.2.14 langchain-ollama==0.2.3 pytest requests
+#
+#   ./eval-env/bin/python -m pytest tests/eval_test.py -m ragas_ci -q -s
+#
+# Pinned versions used by the passing gate:
+#   ragas==0.2.15
+#   langchain==0.3.30
+#   langchain-core==0.3.86
+#   langchain-community==0.3.27
+#   langchain-openai==0.2.14
+#   langchain-ollama==0.2.3
+#   datasets==5.0.1
+#   pandas==3.0.5

@@ -1,0 +1,100 @@
+system:
+  environment: "development"
+  log_level: "INFO"
+  host: "0.0.0.0"
+  port: 8000
+
+# --- Paths ---
+paths:
+  raw_data_dir: "data/raw"
+  eval_data_dir: "data/eval"
+  qdrant_storage: "./vectordb/qdrant_storage"
+  tantivy_index: "./vectordb/tantivy_index"
+  collection_name: "vocal_rag_docs"
+
+# --- Voice Processing Parameters ---
+voice:
+  vad:
+    threshold: 0.5
+    min_silence_duration_ms: 400
+  default_language: "english"
+  stt:
+    model: "base.en"               # faster-whisper id; "distil-whisper-v3" does not exist
+    device: "cpu"
+    compute_type: "int8"
+    language: "en"
+  tts:
+    model_path: "models/kokoro-v1.0.onnx"
+    voices_path: "models/voices-v1.0.bin"
+    voice: "af_bella"
+
+  # Per-language overrides. Retrieval stays English regardless: the corpus,
+  # BM25 tokenizer and bge-small-en embeddings are all English-only, so a
+  # non-English query is normalised to English before it reaches the index.
+  languages:
+    english:
+      label: "English"
+      stt_model: "base.en"
+      stt_language: "en"
+      tts_backend: "kokoro"
+      normalize_query: false
+    hinglish:
+      label: "Hinglish (Hindi + English)"
+      # CTranslate2 build of shunyalabs/zero-stt-hinglish (whisper-medium fine-tune).
+      # Transcription is excellent on code-switched speech; base.en returns nonsense.
+      stt_model: "models/zero-stt-hinglish-ct2"
+      stt_language: null           # auto-detect: the audio is code-switched
+      # Answers are generated in English (the corpus and index are English-only), so
+      # they are spoken with Kokoro. Set this to "f5" to use the Hinglish voice —
+      # it is wired and loads, but its output is not intelligible. See README.
+      tts_backend: "kokoro"
+      normalize_query: true
+      f5:
+        ckpt_file: "models/F5-TTS-Hinglish/model_last.pt"
+        vocab_file: "models/F5-TTS-Hinglish/vocab.txt"
+        ref_audio: "models/hinglish_ref.wav"
+        ref_text_file: "models/hinglish_ref.txt"
+        # Flow-matching steps. Measured on this CPU: 32 -> RTF 11.6x, 16 -> 5.8x, 8 -> 2.9x.
+        # Kokoro sits at 0.47x for comparison, so Hinglish speech is inherently slow here.
+        nfe_step: 16
+
+# --- Ingestion & Chunking ---
+# Changing these requires re-running ingestion; the index is built with them.
+ingestion:
+  chunk_size: 512
+  chunk_overlap: 64
+  normalize_unicode: true
+
+# --- Retrieval & Reranking ---
+retrieval:
+  dense_model: "BAAI/bge-small-en-v1.5"
+  reranker_model: "ms-marco-MiniLM-L-12-v2"
+  top_k_retrieval: 30              # candidates fetched from EACH engine
+  top_k_rerank_pool: 12            # fused candidates handed to the cross-encoder
+  top_k_rerank: 5                  # chunks kept as context after reranking
+  hybrid_alpha: 0.5
+  confidence_threshold: 0.65
+
+# --- LLM Client Parameters ---
+llm:
+  engine: "ollama"
+  base_url: "http://localhost:11434"
+  generation_model: "llama3.2:3b"
+  rewriter_model: "llama3.2:1b"    # de-contextualises follow-up questions
+  temperature: 0.0
+  max_tokens: 256
+
+# --- Cache ---
+# Two-level query cache keyed on the resolved (rewritten, English-normalised) query.
+# Level 1 is an exact match; level 2 is cosine similarity over cached query embeddings.
+# Entries drop the moment data/raw changes, so a stale answer cannot outlive its source.
+cache:
+  enabled: true
+  max_entries: 256
+  similarity_threshold: 0.95       # cosine; bge embeddings are L2-normalised
+
+# --- Verification & Fallbacks ---
+verification:
+  enable_ner_guard: true
+  min_faithfulness_score: 0.85
+  fallback_message: "The provided documents do not contain sufficient information to verify this answer."
