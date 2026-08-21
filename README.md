@@ -42,9 +42,14 @@ implementation of them on a fully local stack.
 - Engish Audio Query Result 
   ![English Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/English_query_res.png)
 
+  Sample output : 
+  <audio controls><source src="https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/audio_outputs/english_sample_output.wav" type="audio/wav"></audio controls>
+  
 - Hinglish Audio Query Result
   ![Hinglish Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Hinglish_query_res.png)
 
+  Sample output : 
+  <audio controls><source src="https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/audio_outputs/hinglish_sample_output.wav" type="audio/wav"></audio controls>
 ---
 ## Repository Layout
 
