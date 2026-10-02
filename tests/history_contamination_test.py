@@ -1,12 +1,12 @@
-"""A refused Hinglish turn must not poison the following English question."""
+"""A refused turn must not poison the following question."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api import routes
-from src.utils.text_sanitizer import has_non_latin, is_refusal, usable_history
+from src.utils.text_sanitizer import is_refusal, usable_history
 
-HINGLISH_Q = "contributor role के लिए कौन से actions allowed हैं"
+REFUSED_Q = "What is the price of a Motorola phone?"
 ENGLISH_Q = "Which actions are allowed for a contributor role?"
 REFUSAL = "Insufficient context."
 
@@ -35,9 +35,6 @@ class _Retriever:
 class _LLM:
     generation_model = "stub"
 
-    def normalize_query(self, query):
-        return "Which actions are allowed for a contributor role?"
-
     def generate(self, query, chunks, tracer=None):
         return "A Contributor can manage resources of all types."
 
@@ -63,13 +60,13 @@ def client(monkeypatch):
 
 
 REFUSED_HISTORY = [
-    {"role": "user", "content": HINGLISH_Q},
+    {"role": "user", "content": REFUSED_Q},
     {"role": "assistant", "content": REFUSAL},
 ]
 
 
 def test_refused_turn_is_not_used_as_context(client):
-    """The reported bug: the refused Hinglish turn hijacked the next question."""
+    """The reported bug: a refused turn hijacked the next question."""
     api, rewriter, retriever = client
 
     api.post("/api/query", json={"query": ENGLISH_Q, "history": REFUSED_HISTORY})
@@ -77,24 +74,6 @@ def test_refused_turn_is_not_used_as_context(client):
     # Nothing usable survives, so the rewriter is skipped and the question stands as asked
     assert rewriter.seen_history is None, "A refused turn must not reach the rewriter."
     assert retriever.seen_query == ENGLISH_Q
-    assert not has_non_latin(retriever.seen_query)
-
-
-def test_non_latin_survivor_is_normalised_even_in_english_mode(client):
-    """If Devanagari still leaks through the rewrite, it must be translated anyway."""
-    api, rewriter, retriever = client
-
-    api.post("/api/query", json={
-        "query": ENGLISH_Q,
-        "language": "english",
-        "history": [
-            {"role": "user", "content": HINGLISH_Q},
-            {"role": "assistant", "content": "Contributor manages resources."},
-        ],
-    })
-
-    assert not has_non_latin(retriever.seen_query), \
-        f"A non-English query reached the English-only index: {retriever.seen_query!r}"
 
 
 def test_successful_turns_are_still_used_as_context(client):
@@ -113,7 +92,6 @@ def test_successful_turns_are_still_used_as_context(client):
 
 def test_history_helpers():
     assert is_refusal(REFUSAL)
-    assert has_non_latin(HINGLISH_Q)
     assert usable_history(REFUSED_HISTORY) == []
     good = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a real answer"}]
     assert usable_history(good) == good

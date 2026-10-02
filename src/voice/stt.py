@@ -18,8 +18,7 @@ class WhisperSTT:
         self.model_size = pick(model_size, "voice.stt.model", "base.en")
         self.device = pick(device, "voice.stt.device", "cpu")
         self.compute_type = pick(compute_type, "voice.stt.compute_type", "int8")
-        # None means auto-detect, which is what code-switched audio needs.
-        self.language = language if language is not None else pick(None, "voice.stt.language", "en")
+        self.language = pick(language, "voice.stt.language", "en")
         self.model = None
         
         if WHISPER_INSTALLED:

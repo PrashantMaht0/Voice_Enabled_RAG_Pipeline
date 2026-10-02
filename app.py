@@ -10,10 +10,8 @@ from urllib.parse import quote
 
 from src.utils.audio_utils import resample_audio, int16_to_float32, float32_to_int16
 from src.utils.text_sanitizer import SOURCE_HEADER, sanitize_for_speech
-from src.utils.config import get as config_get
 from src.voice.stt import WhisperSTT
 from src.voice.tts import KokoroTTS
-from src.voice.tts_f5 import F5HinglishTTS
 
 API_BASE = os.environ.get("VRAG_API_BASE", "http://localhost:8000/api")
 
@@ -26,43 +24,30 @@ custom_css = """
 """
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-# Speech models live in the UI process, cached per language.
-_stt = {}
-_tts = {}
+# Speech models live in the UI process and load on first use.
+_stt = None
+_tts = None
 
 HISTORY_TURNS = 6
 
-LANGUAGES = config_get("voice.languages", {}) or {}
-LANGUAGE_LABELS = {v.get("label", k): k for k, v in LANGUAGES.items()} or {"English": "english"}
-DEFAULT_LANGUAGE = config_get("voice.default_language", "english")
+
+def get_stt():
+    global _stt
+    if _stt is None:
+        _stt = WhisperSTT()
+    return _stt
 
 
-def language_key(label):
-    """Dropdown shows friendly labels; the rest of the code uses config keys."""
-    return LANGUAGE_LABELS.get(label, DEFAULT_LANGUAGE)
+def get_tts():
+    global _tts
+    if _tts is None:
+        _tts = KokoroTTS()
+    return _tts
 
 
-def get_stt(language=DEFAULT_LANGUAGE):
-    if language not in _stt:
-        settings = LANGUAGES.get(language, {})
-        _stt[language] = WhisperSTT(
-            model_size=settings.get("stt_model"),
-            language=settings.get("stt_language"),
-        )
-    return _stt[language]
-
-
-def get_tts(language=DEFAULT_LANGUAGE):
-    if language not in _tts:
-        backend = LANGUAGES.get(language, {}).get("tts_backend", "kokoro")
-        _tts[language] = F5HinglishTTS() if backend == "f5" else KokoroTTS()
-    return _tts[language]
-
-
-def voice_query(audio, history, language_label=None):
+def voice_query(audio, history):
     """Transcribes a recording, answers it, and speaks the answer back."""
     history = history or []
-    language = language_key(language_label) if language_label else DEFAULT_LANGUAGE
     # Must match ask_outputs + voice_reply exactly.
     blank = (history, history, "", "", "_No audio captured._", *blank_metrics(), None)
 
@@ -78,27 +63,27 @@ def voice_query(audio, history, language_label=None):
         samples = float32_to_int16(samples.astype(np.float32))
 
     mono = resample_audio(int16_to_float32(samples), orig_sr=sample_rate, target_sr=16000)
-    question = get_stt(language).transcribe(float32_to_int16(mono).tobytes())
+    question = get_stt().transcribe(float32_to_int16(mono).tobytes())
     stt_ms = (time.perf_counter() - started) * 1000
 
     if not question.strip():
         return blank
 
     # Same endpoint as the text path, so voice turns get identical telemetry
-    outputs = run_query(question, history, language)
+    outputs = run_query(question, history)
     new_history = outputs[0]
     answer = new_history[-1]["content"] if new_history else ""
 
     spoken = sanitize_for_speech(answer)
     audio_out = None
     if spoken:
-        out_rate, chunk = get_tts(language).synthesize_array(spoken)
+        out_rate, chunk = get_tts().synthesize_array(spoken)
         if len(chunk):
             audio_out = (out_rate, chunk)
 
     total_ms = (time.perf_counter() - started) * 1000
     print(f"[VOICE] q={question!r}")
-    print(f"[VOICE] lang={language} | STT {stt_ms:.0f}ms | turn total {total_ms:.0f}ms")
+    print(f"[VOICE] STT {stt_ms:.0f}ms | turn total {total_ms:.0f}ms")
 
     return (*outputs, audio_out)
 
@@ -212,7 +197,7 @@ def upload_document(file_path):
     )
 
 
-def run_query(question, history, language=DEFAULT_LANGUAGE):
+def run_query(question, history):
     """Text turn: send prior turns so follow-up pronouns resolve, then update the transcript."""
     history = history or []
 
@@ -222,7 +207,7 @@ def run_query(question, history, language=DEFAULT_LANGUAGE):
     try:
         data = requests.post(
             f"{API_BASE}/query",
-            json={"query": question, "history": history[-HISTORY_TURNS:], "language": language},
+            json={"query": question, "history": history[-HISTORY_TURNS:]},
             timeout=300,
         ).json()
     except Exception as e:
@@ -293,13 +278,6 @@ with gr.Blocks(title="V-RAG Console", theme=gr.themes.Soft(), css=custom_css) as
                         clear_btn = gr.Button("Clear", scale=1)
 
                     with gr.Accordion("🎙️ Or speak your question", open=False):
-                        language_picker = gr.Dropdown(
-                            label="Language",
-                            choices=list(LANGUAGE_LABELS.keys()),
-                            value=next((lbl for lbl, key in LANGUAGE_LABELS.items()
-                                        if key == DEFAULT_LANGUAGE), None),
-                            interactive=True,
-                        )
                         mic = gr.Audio(
                             sources=["microphone"],
                             type="numpy",
@@ -308,9 +286,6 @@ with gr.Blocks(title="V-RAG Console", theme=gr.themes.Soft(), css=custom_css) as
                         gr.Markdown(
                             "Recording stops on your command, so background noise cannot cut you "
                             "off mid-answer.\n\n"
-                            "Hinglish mode swaps in a code-switching speech model and translates your "
-                            "question to English before searching — the corpus and the index are "
-                            "English-only, so the answer comes back in English.\n\n"
                             "**Microphone access needs a secure origin.** Use "
                             "`http://localhost:7860`; a LAN address like `http://192.168.x.x:7860` "
                             "is blocked by the browser unless served over HTTPS."
@@ -371,7 +346,7 @@ with gr.Blocks(title="V-RAG Console", theme=gr.themes.Soft(), css=custom_css) as
     query_input.submit(fn=run_query, inputs=[query_input, history_state], outputs=ask_outputs)
     clear_btn.click(fn=clear_conversation, outputs=ask_outputs)
 
-    mic.stop_recording(fn=voice_query, inputs=[mic, history_state, language_picker],
+    mic.stop_recording(fn=voice_query, inputs=[mic, history_state],
                        outputs=ask_outputs + [voice_reply])
 
     file_input.upload(fn=upload_document, inputs=[file_input],

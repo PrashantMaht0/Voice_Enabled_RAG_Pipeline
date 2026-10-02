@@ -14,7 +14,7 @@ from src.ingestion.loader import DocumentLoader
 from src.ingestion.chunking import DocumentChunker
 from src.verification.guard_rails import HallucinationGuard
 from src.retrieval.query_rewriter import QueryRewriter
-from src.utils.text_sanitizer import SOURCE_HEADER, has_non_latin, usable_history
+from src.utils.text_sanitizer import SOURCE_HEADER, usable_history
 from src.utils.config import get
 from src.utils.query_cache import QueryCache
 
@@ -79,8 +79,6 @@ class QueryRequest(BaseModel):
     session_id: str = "default_session"
     # Prior turns, used only to resolve pronouns into a standalone query.
     history: List[Dict[str, str]] = []
-    # Retrieval is English-only, so other languages are normalised first.
-    language: str = "english"
 
 
 def build_citations(chunks: List[str]) -> List[Dict[str, str]]:
@@ -113,7 +111,7 @@ def append_citations(answer: str, citations: List[Dict[str, str]]) -> str:
 
 
 def resolve_search_query(request: QueryRequest, tracer=None) -> str:
-    """Resolves follow-up pronouns, then normalises to English if needed."""
+    """Resolves follow-up pronouns into a standalone query."""
     search_query = request.query
 
     # Refused turns carry no subject and would drag the next question off topic.
@@ -125,14 +123,6 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
         search_query = get_rewriter().resolve_query(search_query, history)
         if tracer:
             tracer.end_span("rewrite", f"Standalone query — {search_query!r}")
-
-    # Normalise when the mode says to, or when non-English text survived the rewrite.
-    if get(f"voice.languages.{request.language}.normalize_query", False) or has_non_latin(search_query):
-        if tracer:
-            tracer.start_span("normalize")
-        search_query = get_llm().normalize_query(search_query)
-        if tracer:
-            tracer.end_span("normalize", f"English search query — {search_query!r}")
 
     return search_query
 

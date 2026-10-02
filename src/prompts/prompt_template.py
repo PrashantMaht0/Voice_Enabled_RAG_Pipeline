@@ -74,13 +74,3 @@ def format_chat_history(history: List[Dict[str, str]], max_turns: int = 3) -> st
         formatted.append(f"{role}: {content}")
 
     return "\n".join(formatted)
-
-
-# Translates a Hinglish question into an English search query.
-NORMALIZE_QUERY_PROMPT = """Translate this Hinglish question to English. Hindi words are ordinary words, not product names
-(matlab=meaning, kya=what, kaise=how, kaun=which, hota hai=is, ke liye=for, mein=in, ka=of).
-Keep error codes, numbers and product names as written.
-Reply with the English question only.
-
-Question: {query}
-English:"""

@@ -1,4 +1,4 @@
-"""Exercises the Gradio voice handler for every configured language."""
+"""Exercises the Gradio voice handler end to end with stubbed models."""
 import numpy as np
 import pytest
 
@@ -16,49 +16,34 @@ class _StubSTT:
 
 
 @pytest.fixture
-def stub_models(monkeypatch):
-    stt = _StubSTT()
-    seen = {}
-
-    def fake_get_stt(language=ui.DEFAULT_LANGUAGE):
-        seen["stt_language"] = language
-        return stt
-
-    monkeypatch.setattr(ui, "get_stt", fake_get_stt)
-    return stt, seen
+def stt(monkeypatch):
+    stub = _StubSTT()
+    monkeypatch.setattr(ui, "get_stt", lambda: stub)
+    return stub
 
 
 def silent_audio(seconds=0.5, sample_rate=48000):
     return sample_rate, np.zeros(int(sample_rate * seconds), dtype=np.int16)
 
 
-def test_voice_query_runs_for_every_configured_language(stub_models):
-    """Guards the NameError: each label must resolve without blowing up."""
-    stt, seen = stub_models
+def test_voice_query_transcribes_and_returns_the_full_output_tuple(stt):
+    outputs = ui.voice_query(silent_audio(), [])
 
-    for label in ui.LANGUAGE_LABELS:
-        outputs = voice = ui.voice_query(silent_audio(), [], label)
-        assert len(outputs) == 10
-        assert seen["stt_language"] == ui.LANGUAGE_LABELS[label]
-
-    assert stt.calls == len(ui.LANGUAGE_LABELS)
+    assert len(outputs) == 10
+    assert stt.calls == 1
 
 
-def test_voice_query_defaults_to_the_configured_language(stub_models):
-    stt, seen = stub_models
+def test_stereo_float_audio_is_accepted(stt):
+    rate, mono = silent_audio()
+    stereo = np.stack([mono, mono], axis=1).astype(np.float32)
 
-    ui.voice_query(silent_audio(), [], None)
+    outputs = ui.voice_query((rate, stereo), [])
 
-    assert seen["stt_language"] == ui.DEFAULT_LANGUAGE
+    assert len(outputs) == 10 and stt.calls == 1
 
 
 def test_no_audio_returns_the_full_output_tuple():
-    outputs = ui.voice_query(None, [], "English")
+    outputs = ui.voice_query(None, [])
 
     assert len(outputs) == 10
     assert outputs[-1] is None
-
-
-def test_language_key_falls_back_for_unknown_labels():
-    assert ui.language_key("Klingon") == ui.DEFAULT_LANGUAGE
-    assert ui.language_key("English") == "english"

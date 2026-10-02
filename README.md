@@ -1,7 +1,7 @@
 # V-RAG: Enterprise Voice-Enabled RAG Pipeline
 
 A low-latency, zero-hallucination question-answering system for your own documents. Ask by typing or
-by speaking, in English or Hinglish(Hindi + English), and get an answer drawn only from the documents you supplied —
+by speaking, and get an answer drawn only from the documents you supplied —
 with the sources it used.
 
 Everything runs on your machine. No cloud APIs, no vendor keys, no data leaving the laptop.
@@ -43,11 +43,6 @@ implementation of them on a fully local stack.
   ![English Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/English_query_res.png)
 
   [Sample Audio Output](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/raw/main/assets/audio_outputs/english_sample_output.wav)
-  
-- Hinglish Audio Query Result
-  ![Hinglish Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Hinglish_query_res.png)
-
-  [Sample Audio Output](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/raw/main/assets/audio_outputs/hinglish_sample_output.wav)
 ---
 ## Repository Layout
 
@@ -86,9 +81,8 @@ Voice_Enabled_RAG_Pipeline/
 │   ├── llm/
 │   │   └── llm_client.py            # Streaming Ollama client, temperature 0.0
 │   ├── voice/
-│   │   ├── stt.py                   # Faster-Whisper transcription (English and Hinglish)
-│   │   ├── tts.py                   # Kokoro-82M speech synthesis
-│   │   └── tts_f5.py                # Experimental Hinglish speech synthesis
+│   │   ├── stt.py                   # Faster-Whisper speech transcription
+│   │   └── tts.py                   # Kokoro-82M speech synthesis
 │   ├── verification/
 │   │   └── guard_rails.py           # spaCy NER and citation grounding checks
 │   └── utils/
@@ -116,7 +110,7 @@ A question travels through the pipeline in stages. Each stage can stop it: if th
 contain a trustworthy answer, the system refuses rather than inventing one.
 
 1. **Understand the question.** Speech is transcribed. Follow-up questions like *"how do I scale it?"*
-   are rewritten into standalone ones, and non-English questions are translated for searching.
+   are rewritten into standalone ones.
 2. **Search twice.** A keyword search and a meaning-based search run in parallel, then their results
    are merged: one catches exact terms and error codes, the other catches paraphrases.
 3. **Re-read the shortlist.** A slower, more careful model re-reads the top candidates against the
@@ -155,21 +149,9 @@ On a laptop CPU, with no GPU:
 
 ---
 
-## Voice and language support
+## Voice
 
-**English** — press Record, speak, press Stop, and the answer is read back aloud.
-
-**Hinglish** — Hindi and English mixed together, the way people actually speak. A dedicated speech
-model handles it:
-
-```
-you say    : "Azure mai Resources ka kya matlab hota hai"
-Hinglish model hears: "Azure mai Resources ka kya matlab hota hai"  
-searched as: "What is the meaning of Resources in Azure?"
-```
-
-Hinglish questions are translated to English before searching, because the documents are in English.
-The answer comes back in English and is read aloud in the English voice.
+Press Record, speak your question in English, press Stop, and the answer is read back aloud.
 
 ---
 
@@ -200,8 +182,6 @@ mkdir -p models
 curl -L -o models/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 curl -L -o models/voices-v1.0.bin  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
-
-For Hinglish speech input, see [Hinglish setup](#hinglish-setup).
 
 **3. Add your documents**
 
@@ -258,25 +238,10 @@ Everything tunable lives in `config/config.yaml` — no code changes needed:
 | `retrieval.top_k_rerank` | How many passages the answer may draw from. |
 | `llm.generation_model` | Which Ollama model writes the answers. |
 | `cache.enabled`, `cache.max_entries` | Turn caching off, or change how much is remembered. |
-| `voice.languages` | Which speech models are used for English and Hinglish. |
+| `voice.stt.model`, `voice.tts.voice` | Which speech recognition model and which voice are used. |
 | `ingestion.chunk_size` | How large each document piece is. Changing this needs a re-index. |
 
 Save the file and restart the engine for changes to take effect.
-
-### Hinglish setup
-
-```bash
-./dev-env/bin/python -c "from huggingface_hub import snapshot_download as d; \
-  d(repo_id='shunyalabs/zero-stt-hinglish', local_dir='models/zero-stt-hinglish', \
-    allow_patterns=['*.json','*.txt','*.safetensors'])"
-
-./dev-env/bin/ct2-transformers-converter --model models/zero-stt-hinglish \
-  --output_dir models/zero-stt-hinglish-ct2 --quantization int8 \
-  --copy_files tokenizer.json preprocessor_config.json tokenizer_config.json \
-               special_tokens_map.json added_tokens.json normalizer.json vocab.json merges.txt
-```
-
-Then choose **Hinglish** in the dashboard's language selector.
 
 ### Docker
 
@@ -288,10 +253,11 @@ docker compose up
 
 ## Future work
 
-- **Hinglish spoken answers.** Hinglish questions work today, but answers are spoken in the English
-  voice. A Hinglish voice is wired up and can be switched on in `config.yaml`, though the available
-  models are not yet good enough to ship.
-- **More languages.** The same pattern — a speech model per language plus translation before search —
+- **Hinglish voice.** Questions spoken in Hindi and English mixed together, the way many people
+  actually speak. A first version was built and then taken out, because the speech model and the
+  translation step before search were not reliable enough yet. Spoken Hinglish answers would follow
+  once good voice models exist.
+- **More languages.** The same pattern (a speech model per language plus translation before search)
   extends to Tamil, Bengali, Spanish and others without touching the search engine.
 - **Documents in other languages.** Today the documents themselves must be English. A multilingual
   embedding model would lift that limit.

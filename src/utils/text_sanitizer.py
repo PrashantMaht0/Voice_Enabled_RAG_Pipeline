@@ -50,11 +50,6 @@ def is_refusal(text: str) -> bool:
     return any(marker in lowered for marker in REFUSAL_MARKERS)
 
 
-def has_non_latin(text: str) -> bool:
-    """True if the text carries script beyond Latin/punctuation (e.g. Devanagari)."""
-    return any(ord(ch) > 0x24F for ch in (text or "") if ch.isalpha())
-
-
 def usable_history(history):
     """Drops refused turns and the questions that produced them."""
     kept = []

@@ -3,7 +3,6 @@ import ollama
 from src.prompts.prompt_template import (
     SYSTEM_RAG_PROMPT,
     QUERY_REWRITE_PROMPT,
-    NORMALIZE_QUERY_PROMPT,
     FALLBACK_RESPONSE,
     build_rag_context_prompt,
     format_chat_history
@@ -46,38 +45,6 @@ class LocalLLMClient:
             return rewritten if rewritten else query
         except Exception as e:
             return query
-
-    def normalize_query(self, query: str) -> str:
-        """Turns a Hinglish question into an English search query."""
-        try:
-            response = self.client.chat(
-                model=self.generation_model,
-                messages=[{"role": "user", "content": NORMALIZE_QUERY_PROMPT.format(query=query)}],
-                options={"temperature": self.temperature, "num_predict": 64}
-            )
-            return self._first_usable_line(response["message"]["content"], query)
-        except Exception:
-            return query
-
-    @staticmethod
-    def _first_usable_line(reply: str, fallback: str) -> str:
-        """Extracts a single query line, falling back when the model rambles."""
-        text = (reply or "").strip()
-        if "English:" in text:                       # model repeated the template
-            text = text.split("English:")[-1]
-
-        for line in text.splitlines():
-            line = line.strip().strip('"').strip()
-            if not line:
-                continue
-            lowered = line.lower()
-            if lowered.startswith(("here is", "here are", "sure", "the rewritten")):
-                continue
-            if line[0].isdigit() and line[1:3] in (". ", ") "):   # numbered list item
-                line = line[3:].strip()
-            if 3 < len(line) <= 200:
-                return line
-        return fallback
 
     def stream_generate(
         self,
