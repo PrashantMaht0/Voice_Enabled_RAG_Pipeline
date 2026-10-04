@@ -14,9 +14,10 @@ from src.ingestion.loader import DocumentLoader
 from src.ingestion.chunking import DocumentChunker
 from src.verification.guard_rails import HallucinationGuard
 from src.retrieval.query_rewriter import QueryRewriter
-from src.utils.text_sanitizer import SOURCE_HEADER, usable_history
+from src.utils.text_sanitizer import CITATION_TAG, SOURCE_HEADER, parse_tag, usable_history
 from src.utils.config import get
 from src.utils.query_cache import QueryCache
+from src.vector_db.vector_store import INDEX_FORMAT_VERSION
 
 router = APIRouter()
 
@@ -38,7 +39,7 @@ def get_retriever() -> HybridRetriever:
 def get_llm() -> LocalLLMClient:
     global _llm
     if _llm is None:
-        _llm = LocalLLMClient(generation_model='llama3.2:3b')
+        _llm = LocalLLMClient()   # model from llm.generation_model in config.yaml
     return _llm
 
 def get_guard() -> HallucinationGuard:
@@ -73,6 +74,7 @@ def warmup():
     get_guard()
     get_rewriter()
     get_cache()
+    ensure_index_format()
 
 class QueryRequest(BaseModel):
     query: str
@@ -81,33 +83,61 @@ class QueryRequest(BaseModel):
     history: List[Dict[str, str]] = []
 
 
-def build_citations(chunks: List[str]) -> List[Dict[str, str]]:
-    """Provenance derived from the chunks that were actually retrieved."""
+def build_citations(chunks: List[str]) -> List[Dict]:
+    """Provenance derived from the chunks that were actually retrieved, in retrieval order."""
     seen, citations = set(), []
     for chunk in chunks:
         match = SOURCE_HEADER.match(chunk)
         if not match:
             continue
-        key = (match.group(1), match.group(2))
+        key = parse_tag(match)
         if key in seen:
             continue
         seen.add(key)
-        citations.append({"source": match.group(1), "chunk": match.group(2)})
+        source, kind, number = key
+        citations.append({
+            "source": source,
+            "page": number if kind == "Page" else None,
+            "chunk": number if kind == "Chunk" else None,
+        })
     return citations
 
 
-def append_citations(answer: str, citations: List[Dict[str, str]]) -> str:
+def citation_key(citation: Dict) -> tuple:
+    """The (source, kind, number) a citation's tag parses to."""
+    if citation.get("page") is not None:
+        return citation["source"], "Page", int(citation["page"])
+    return citation["source"], "Chunk", int(citation["chunk"])
+
+
+def citation_tag(citation: Dict) -> str:
+    source, kind, number = citation_key(citation)
+    return f"[Source: {source} | {kind}: {number}]"
+
+
+def append_citations(answer: str, citations: List[Dict]) -> str:
     """Appends source tags the model failed to emit itself."""
     if not citations or not answer.strip():
         return answer
 
-    already = {(c["source"], c["chunk"]) for c in citations if f"| Chunk: {c['chunk']}]" in answer}
-    missing = [c for c in citations if (c["source"], c["chunk"]) not in already]
+    already = {parse_tag(m) for m in CITATION_TAG.finditer(answer)}
+    missing = [c for c in citations if citation_key(c) not in already]
     if not missing:
         return answer
 
-    tags = " ".join(f"[Source: {c['source']} | Chunk: {c['chunk']}]" for c in missing)
+    tags = " ".join(citation_tag(c) for c in missing)
     return f"{answer.rstrip()} {tags}"
+
+
+def log_citations(citations: List[Dict]) -> None:
+    """One terminal line per answered query, naming each cited file and page."""
+    if not citations:
+        return
+    cited = ", ".join(
+        f"{c['source']} p.{c['page']}" if c.get("page") is not None else f"{c['source']} chunk {c['chunk']}"
+        for c in citations
+    )
+    print(f"[CITATIONS] {cited}")
 
 
 def resolve_search_query(request: QueryRequest, tracer=None) -> str:
@@ -126,31 +156,50 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
 
     return search_query
 
-def trigger_ingestion_pipeline():
-    """Rebuilds both indexes from every document in data/raw."""
+def rebuild_index(db_manager=None) -> bool:
+    """Rebuilds both indexes from every document in data/raw. True only on full success."""
+    # Reuses the process-wide manager: embedded Qdrant is single-handle.
+    db_manager = db_manager or get_retriever().store.db_manager
+    db_manager.clear_index_format()
     print("[Ingestion] Starting vectorization...")
     try:
         # 1. Load and normalize texts
-        loader = DocumentLoader()
-        documents = loader.load_documents()
-        
-        # 2. Chunk with token-aware windows
-        chunker = DocumentChunker()
-        chunks = chunker.chunk_documents(documents)
-        
-        # Reuses the process-wide manager: embedded Qdrant is single-handle.
-        db_manager = get_retriever().store.db_manager
-        if not chunks:
+        documents = DocumentLoader().load_documents()
+
+        # 2. Chunk with token-aware windows (PDFs page by page)
+        chunks = DocumentChunker().chunk_documents(documents)
+
+        if chunks:
+            db_manager.ingest_chunks(chunks)
+        else:
             # Clear both stores, or BM25 keeps serving deleted documents.
             db_manager.reset_indexes()
-            get_cache().invalidate("corpus emptied")
-            print("[Ingestion] Corpus is empty — indexes cleared.")
-            return
-        db_manager.ingest_chunks(chunks)
-        get_cache().invalidate("corpus reindexed")
-        print(f"[Ingestion] Successfully indexed {len(chunks)} chunks.")
+        get_cache().invalidate("corpus reindexed" if chunks else "corpus emptied")
+        db_manager.mark_index_format()
+        print(f"[Ingestion] Successfully indexed {len(chunks)} chunks." if chunks
+              else "[Ingestion] Corpus is empty — indexes cleared.")
+        return True
     except Exception as e:
         print(f"[Ingestion] Pipeline failed: {e}")
+        return False
+
+
+def trigger_ingestion_pipeline():
+    """Rebuild after an upload or delete."""
+    rebuild_index()
+
+
+def ensure_index_format():
+    """Rebuilds once at startup when the index predates the current chunk layout."""
+    db_manager = get_retriever().store.db_manager
+    found = db_manager.index_format()
+    if found < INDEX_FORMAT_VERSION:
+        print(f"[Ingestion] Index format {found} is older than {INDEX_FORMAT_VERSION}; rebuilding from data/raw.")
+        rebuild_index(db_manager)
+    elif found > INDEX_FORMAT_VERSION:
+        print(f"[Ingestion] WARNING: index format {found} is newer than this code ({INDEX_FORMAT_VERSION}); "
+              "leaving it as is.")
+
 
 @router.get("/health")
 async def health_check():
@@ -257,6 +306,7 @@ async def manual_query(request: QueryRequest):
         if cached is not None:
             tracer.add_static_span("cache", f"{cache_level.upper()} hit — retrieval and generation skipped")
             tracer.print_trace()
+            log_citations(cached.get("citations", []))
             return {
                 **cached,
                 "cache": cache_level,
@@ -308,6 +358,7 @@ async def manual_query(request: QueryRequest):
         
         # Output the final trace to your terminal
         tracer.print_trace()
+        log_citations(citations)
         
         payload = {
             "answer": answer,
@@ -338,6 +389,8 @@ async def stream_query(request: QueryRequest):
 
     cached, cache_level = get_cache().get(search_query)
     if cached is not None:
+        log_citations(cached.get("citations", []))
+
         def emit_cached():
             yield json.dumps({
                 "type": "meta",
@@ -373,6 +426,7 @@ async def stream_query(request: QueryRequest):
                 yield json.dumps({"type": "token", "text": token}) + "\n"
 
             answer = append_citations("".join(streamed).strip(), build_citations(retrieved_chunks))
+            log_citations(build_citations(retrieved_chunks))
             get_cache().put(search_query, {
                 "answer": answer,
                 "retrieved_context": retrieved_chunks,

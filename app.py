@@ -9,7 +9,7 @@ import requests
 from urllib.parse import quote
 
 from src.utils.audio_utils import resample_audio, int16_to_float32, float32_to_int16
-from src.utils.text_sanitizer import SOURCE_HEADER, sanitize_for_speech
+from src.utils.text_sanitizer import SOURCE_HEADER, parse_tag, sanitize_for_speech
 from src.voice.stt import WhisperSTT
 from src.voice.tts import KokoroTTS
 
@@ -118,11 +118,12 @@ def format_sources(chunks):
     for i, chunk in enumerate(chunks, start=1):
         match = SOURCE_HEADER.match(chunk)
         if match:
-            source, chunk_no = match.group(1), match.group(2)
+            source, kind, number = parse_tag(match)
+            locator = f"{kind.lower()} {number}"           # "page 12" for PDFs, "chunk 3" for text
             body = chunk[match.end():]
         else:
-            source, chunk_no, body = "unknown", "-", chunk
-        blocks.append(f"**[{i}] {source} · chunk {chunk_no}**\n\n{body.strip()}")
+            source, locator, body = "unknown", "chunk -", chunk
+        blocks.append(f"**[{i}] {source} · {locator}**\n\n{body.strip()}")
     return "\n\n---\n\n".join(blocks)
 
 

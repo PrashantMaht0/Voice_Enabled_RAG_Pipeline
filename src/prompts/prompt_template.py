@@ -17,7 +17,8 @@ STRICT OPERATIONAL RULES:
    something is, give the definition the snippets state, using their wording. Never define a term from your own
    knowledge, and never introduce terms that do not appear in the snippets.
 3. Citations: End every factual sentence with its source tag, copied exactly from that snippet's header
-   (e.g., [Source: manual.pdf | Chunk: 2]). The tag goes AFTER the sentence it supports.
+   (e.g., [Source: manual.pdf | Page: 12], or [Source: notes.md | Chunk: 2] for text files).
+   The tag goes AFTER the sentence it supports.
    NEVER begin your answer with a source tag, and never put a tag on a line of its own.
 4. Uncertainty: If the context snippets do not explicitly provide enough information to answer the question, state exactly:
 "{fallback}"

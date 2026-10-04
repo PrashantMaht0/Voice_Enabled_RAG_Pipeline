@@ -1,7 +1,7 @@
 import os
 import re
 import unicodedata
-from typing import List, Dict, Optional
+from typing import List, Dict, Tuple
 from pypdf import PdfReader
 from src.utils.config import pick
 
@@ -24,18 +24,25 @@ class DocumentLoader:
         
         return cleaned.strip()
 
-    def _load_pdf(self, file_path: str) -> str:
-        """Extracts and normalizes text from a PDF."""
-        text = ""
+    def _load_pdf_pages(self, file_path: str) -> List[Tuple[int, str]]:
+        """Extracts and normalizes each PDF page on its own, keeping its 1 based page number."""
+        pages = []
         try:
             reader = PdfReader(file_path)
-            for page in reader.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n"
         except Exception as e:
             print(f"Error reading PDF {file_path}: {e}")
-        return text
+            return pages
+
+        for number, page in enumerate(reader.pages, start=1):
+            try:
+                text = self._normalize_text(page.extract_text() or "")
+            except Exception as e:
+                # One broken page must not cost the rest of the document
+                print(f"Error reading page {number} of {file_path}: {e}")
+                continue
+            if text:
+                pages.append((number, text))
+        return pages
 
     def _load_text(self, file_path: str) -> str:
         """Extracts and normalizes text from txt/md files."""
@@ -55,23 +62,27 @@ class DocumentLoader:
         for filename in os.listdir(self.raw_data_dir):
             file_path = os.path.join(self.raw_data_dir, filename)
             
+            pages = None
             if filename.lower().endswith(".pdf"):
-                raw_text = self._load_pdf(file_path)
+                pages = self._load_pdf_pages(file_path)
+                clean_text = "\n".join(text for _, text in pages)
             elif filename.lower().endswith((".txt", ".md")):
-                raw_text = self._load_text(file_path)
+                clean_text = self._normalize_text(self._load_text(file_path))
             else:
                 continue
-                
-            clean_text = self._normalize_text(raw_text)
-            
+
             if clean_text:
-                documents.append({
+                document = {
                     "content": clean_text,
                     "metadata": {
                         "source": filename,
                         # Hash the document text to act as a unique document ID
                         "doc_hash": str(hash(clean_text))
                     }
-                })
+                }
+                if pages is not None:
+                    # Chunked page by page so every PDF chunk keeps one page number
+                    document["pages"] = pages
+                documents.append(document)
                 
         return documents

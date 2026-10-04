@@ -39,3 +39,48 @@ def test_strip_is_idempotent_on_a_growing_buffer():
         buffer += token
         buffer = strip_citation_headers(buffer)
     assert buffer.strip() == "Blobs are files."
+
+
+
+# The shape of the old English sample: list items start with "*", so Kokoro said "Asterisk can create..."
+LISTED = (
+    "Azure Resource Manager lets you:\n"
+    "* Can create and manage resources [Source: azure.pdf | Chunk: 3]\n"
+    "* **Deploy** templates as a group [Source: azure.pdf | Chunk: 4]\n"
+)
+
+
+def test_list_items_are_spoken_as_sentences_without_markers():
+    assert sanitize_for_speech(LISTED) == (
+        "Azure Resource Manager lets you: Can create and manage resources. Deploy templates as a group."
+    )
+
+
+def test_no_formatting_symbol_survives():
+    answer = (
+        "## Storage tiers\n"
+        "1. __Hot__ tier, for *frequent* access;\n"
+        "2) `Cool` tier, set by max_retries\n"
+        "- Archive tier: [docs](https://example.com)\n"
+        "\u2022 Premium tier for C#\n"
+        "```bash\naz login\n```"
+    )
+    spoken = sanitize_for_speech(answer)
+    assert spoken == ("Storage tiers. Hot tier, for frequent access. Cool tier, set by max retries. "
+                      "Archive tier: docs. Premium tier for C sharp. az login")
+    assert not set("*#`_\u2022\uf0b7") & set(spoken)
+
+
+def test_citations_file_names_chunk_and_page_numbers_are_not_spoken():
+    answer = (
+        "Blobs are files [Source: azure.pdf | Page: 12]. Tables hold rows (Source: azure.pdf, Chunk 3). "
+        "See chunk 7 of 978150930_Microsoft_Azure.pdf for limits."
+    )
+    spoken = sanitize_for_speech(answer)
+    assert spoken == "Blobs are files. Tables hold rows. See of the document for limits."
+    assert not any(ch.isdigit() for ch in spoken)
+
+
+def test_plain_prose_is_unchanged():
+    prose = "A Web App is hosted in an App Service... It scales out on demand."
+    assert sanitize_for_speech(prose) == prose

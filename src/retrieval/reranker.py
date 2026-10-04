@@ -1,3 +1,4 @@
+import os
 from typing import List, Dict
 from src.utils.config import pick
 try:
@@ -8,8 +9,12 @@ except ImportError:
 
 class CrossEncoderReranker:
     """Scores query and chunk jointly to reorder retrieval candidates."""
-    def __init__(self, model_name: str = None, cache_dir: str = "/tmp"):
+    def __init__(self, model_name: str = None, cache_dir: str = None):
         self.model_name = pick(model_name, "retrieval.reranker_model", "ms-marco-MiniLM-L-12-v2")
+        # A persistent cache (not /tmp), so the model downloads once; Docker points it at a volume.
+        cache_dir = cache_dir or os.environ.get("FLASHRANK_CACHE_DIR") or os.path.expanduser("~/.cache/flashrank")
+        os.makedirs(cache_dir, exist_ok=True)
+        self.cache_dir = cache_dir
         self.ranker = None
         
         if FLASHRANK_INSTALLED:

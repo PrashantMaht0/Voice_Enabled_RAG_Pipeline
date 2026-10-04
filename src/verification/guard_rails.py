@@ -2,8 +2,7 @@ import re
 from typing import List, Tuple
 from src.utils.config import pick
 
-# Citation markers injected into every chunk at ingestion time (see chunking.py)
-CITATION_MARKER = re.compile(r"\[Source: (.+?) \| Chunk: (\d+)\]")
+from src.utils.text_sanitizer import CITATION_TAG, parse_tag
 
 try:
     import spacy
@@ -58,20 +57,20 @@ class HallucinationGuard:
     def strip_ungrounded_citations(self, generated_text: str, context_chunks: List[str]) -> Tuple[str, List[str]]:
         """Removes citation markers pointing at chunks that were never retrieved."""
         grounded = {
-            match.groups()
+            parse_tag(match)
             for chunk in context_chunks
-            for match in CITATION_MARKER.finditer(chunk)
+            for match in CITATION_TAG.finditer(chunk)
         }
 
         removed = []
 
         def keep_or_drop(match):
-            if match.groups() in grounded:
+            if parse_tag(match) in grounded:
                 return match.group(0)
             removed.append(match.group(0))
             return ""
 
-        cleaned = CITATION_MARKER.sub(keep_or_drop, generated_text)
+        cleaned = CITATION_TAG.sub(keep_or_drop, generated_text)
 
         if removed:
             # Tidy the holes the removal leaves behind

@@ -36,6 +36,23 @@ jobs:
     # hosted runner. Trigger it deliberately from a machine that has them.
     if: github.event_name == 'workflow_dispatch'
     steps:
+      # First, so a runner without Ollama or the API stops in seconds, before installing anything
+      - name: Check Ollama and the API are reachable
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.parse, urllib.request
+          url = urllib.parse.urlsplit(os.environ.get("VRAG_API_URL", "http://localhost:8000/api/query"))
+          health = f"{url.scheme}://{url.netloc}/api/health"
+          try:
+              status = json.load(urllib.request.urlopen(health, timeout=5)).get("ollama_status")
+          except Exception as e:
+              sys.exit(f"The V-RAG API is not reachable at {health} ({e}). "
+                       "Run this job on a machine with Ollama, the built index and the API server.")
+          if status != "online":
+              sys.exit(f"The API is up but Ollama is {status!r}. Run this job on a machine with Ollama running.")
+          print("Ollama and the API are reachable.")
+          PY
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -45,7 +62,10 @@ jobs:
       - name: Install evaluation dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-eval.txt
+          # Versions of the recorded passing gate; kept apart from requirements.txt (installing both breaks ragas)
+          pip install ragas==0.2.15 langchain==0.3.30 langchain-core==0.3.86 langchain-community==0.3.27 \
+            langchain-openai==0.2.14 langchain-ollama==0.2.3 datasets==5.0.1 pandas==3.0.5 \
+            pytest==9.1.1 requests==2.34.2
 
       - name: Ragas thresholds (faithfulness 0.85 / relevancy 0.85)
         run: pytest tests/eval_test.py -m ragas_ci -q -s

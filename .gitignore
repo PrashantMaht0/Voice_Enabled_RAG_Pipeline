@@ -22,3 +22,6 @@ scripts
 models
 #---- macOS
 .DS_Store
+
+#---- latency benchmark runs (spec 0003)
+data/benchmarks/

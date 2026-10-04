@@ -1,3 +1,4 @@
+import json
 import os
 from typing import List, Dict
 from src.embeddings.embedder import DenseEmbedder
@@ -16,6 +17,12 @@ try:
     TANTIVY_INSTALLED = True
 except ImportError:
     TANTIVY_INSTALLED = False
+
+# Bump when the chunk layout changes, so an older index is rebuilt at startup.
+# 2: PDFs are chunked page by page and their headers cite "Page: N".
+INDEX_FORMAT_VERSION = 2
+INDEX_MARKER = "index_version.json"
+
 
 class VectorDBManager:
     """Owns the Qdrant and Tantivy index lifecycle."""
@@ -82,6 +89,30 @@ class VectorDBManager:
             shutil.rmtree(self.tantivy_path)
             os.makedirs(self.tantivy_path, exist_ok=True)
             self.tantivy_index = tantivy.Index(schema, path=self.tantivy_path)
+
+    @property
+    def marker_path(self) -> str:
+        """The format marker sits beside both stores, so test indexes get their own."""
+        return os.path.join(os.path.dirname(os.path.abspath(self.qdrant_path)), INDEX_MARKER)
+
+    def index_format(self) -> int:
+        """Format of the index on disk; a missing or unreadable marker counts as the old format 1."""
+        try:
+            with open(self.marker_path, encoding="utf-8") as f:
+                return int(json.load(f)["format"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return 1
+
+    def mark_index_format(self):
+        with open(self.marker_path, "w", encoding="utf-8") as f:
+            json.dump({"format": INDEX_FORMAT_VERSION}, f)
+
+    def clear_index_format(self):
+        """Dropped before any rebuild, so a crash partway never looks like a healthy index."""
+        try:
+            os.remove(self.marker_path)
+        except FileNotFoundError:
+            pass
 
     def reset_indexes(self):
         """Empties both stores. Used when the corpus drops to zero documents."""

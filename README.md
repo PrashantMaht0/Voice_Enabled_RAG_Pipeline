@@ -167,21 +167,23 @@ python -m venv dev-env
 
 **2. Download the models**
 
-The language model comes from [Ollama](https://ollama.com):
+The language models come from [Ollama](https://ollama.com). Install it, start it, then:
 
 ```bash
 ollama pull llama3.2:3b        # writes the answers
-ollama pull llama3.2:1b        # rewrites follow-up questions
+ollama pull llama3.2:1b        # rewrites follow up questions
 ```
 
-Search models (embedding and re-ranking) download automatically the first time you ask a question.
-For spoken answers, fetch the voice model:
+The voice model (Kokoro, about 340 MB) goes into `models/`:
 
 ```bash
 mkdir -p models
 curl -L -o models/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 curl -L -o models/voices-v1.0.bin  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
+
+The speech recognition model (Whisper) and the search models download by themselves the first time
+they are used, about 300 MB in all, so the first spoken question is slower.
 
 **3. Add your documents**
 
@@ -219,7 +221,8 @@ grades every answer. It needs its own environment, since it depends on older lib
 ```bash
 python -m venv eval-env
 ./eval-env/bin/pip install ragas==0.2.15 langchain==0.3.30 langchain-core==0.3.86 \
-    langchain-community==0.3.27 langchain-openai==0.2.14 langchain-ollama==0.2.3 pytest requests
+    langchain-community==0.3.27 langchain-openai==0.2.14 langchain-ollama==0.2.3 \
+    datasets==5.0.1 pandas==3.0.5 pytest==9.1.1 requests==2.34.2
 ollama pull llama3.1:8b
 
 ./eval-env/bin/python -m pytest tests/eval_test.py -m ragas_ci -q -s
@@ -245,9 +248,43 @@ Save the file and restart the engine for changes to take effect.
 
 ### Docker
 
+No Python needed on your machine, only Docker (give Docker Desktop at least 8 GB of memory).
+
+1. Download the Kokoro voice files into `models/` with the two `curl` commands from step 2 above.
+   The dashboard container reads them from there.
+2. Start everything:
+
+   ```bash
+   docker compose up
+   ```
+
+3. The first time, pull the language models into the Ollama container (about 3.3 GB):
+
+   ```bash
+   docker compose exec ollama ollama pull llama3.2:3b
+   docker compose exec ollama ollama pull llama3.2:1b
+   ```
+
+Then open **http://localhost:7860**. The first build of the image takes a few minutes (about 3.8 GB),
+and Whisper and the search models download on first use. Later starts reuse everything. The first
+start also logs an index rebuild of an empty corpus; that is expected.
+
+The containers start with no documents: upload yours from the dashboard. They are kept in Docker
+volumes across restarts, and your own `data/` folder is never used.
+
+On a Mac, Docker cannot use the GPU, so answers are slow when Ollama runs inside Docker. If you have
+Ollama installed on your machine (with the two models pulled), point the containers at it instead and
+skip step 3:
+
 ```bash
-docker compose up
+VRAG_OLLAMA_HOST=http://host.docker.internal:11434 docker compose up
 ```
+
+On Linux, Ollama on the host must listen on all interfaces (`OLLAMA_HOST=0.0.0.0 ollama serve`) for this.
+
+To start over, deleting documents, index, models and caches in Docker: `docker compose down -v`.
+
+The commands in this README are for macOS and Linux.
 
 ---
 
