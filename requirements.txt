@@ -40,26 +40,5 @@ PyYAML==6.0.3
 pytest==9.1.1
 
 
-# =============================================================================
-# EVALUATION EXTRAS — INSTALL IN A SEPARATE VIRTUALENV, NOT THIS ONE.
-# =============================================================================
-# Ragas pulls langchain 0.3.x; the versions above are a langchain-1.x-era stack.
-# Installing both together downgrades langchain-core and breaks ragas' own
-# imports, so the quality gate gets its own environment:
-#
-#   python -m venv eval-env
-#   ./eval-env/bin/pip install ragas==0.2.15 langchain==0.3.30 \
-#       langchain-core==0.3.86 langchain-community==0.3.27 \
-#       langchain-openai==0.2.14 langchain-ollama==0.2.3 pytest requests
-#
-#   ./eval-env/bin/python -m pytest tests/eval_test.py -m ragas_ci -q -s
-#
-# Pinned versions used by the passing gate:
-#   ragas==0.2.15
-#   langchain==0.3.30
-#   langchain-core==0.3.86
-#   langchain-community==0.3.27
-#   langchain-openai==0.2.14
-#   langchain-ollama==0.2.3
-#   datasets==5.0.1
-#   pandas==3.0.5
+# Evaluation (Ragas quality gate): installed in its own virtualenv, never this one, because
+# ragas needs langchain 0.3.x. The pinned list is in the README ("Run the quality tests").

@@ -159,8 +159,10 @@ Press Record, speak your question in English, press Stop, and the answer is read
 
 **1. Install**
 
+Use Python 3.12, the version the Docker image and CI use:
+
 ```bash
-python -m venv dev-env
+python3.12 -m venv dev-env
 ./dev-env/bin/pip install -r requirements.txt
 ./dev-env/bin/python -m spacy download en_core_web_sm
 ```
@@ -250,23 +252,31 @@ Save the file and restart the engine for changes to take effect.
 
 No Python needed on your machine, only Docker (give Docker Desktop at least 8 GB of memory).
 
-1. Download the Kokoro voice files into `models/` with the two `curl` commands from step 2 above.
-   The dashboard container reads them from there.
+1. Download the Kokoro voice files into `models/`; the dashboard container reads them from there:
+
+   ```bash
+   mkdir -p models
+   curl -L -o models/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+   curl -L -o models/voices-v1.0.bin  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+   ```
+
 2. Start everything:
 
    ```bash
    docker compose up
    ```
 
-3. The first time, pull the language models into the Ollama container (about 3.3 GB):
+3. The first time, in a second terminal (step 2 keeps the first one busy), pull the language models
+   into the Ollama container (about 3.3 GB):
 
    ```bash
    docker compose exec ollama ollama pull llama3.2:3b
    docker compose exec ollama ollama pull llama3.2:1b
    ```
 
-Then open **http://localhost:7860**. The first build of the image takes a few minutes (about 3.8 GB),
-and Whisper and the search models download on first use. Later starts reuse everything. The first
+Then open **http://localhost:7860**. It can take a few minutes to answer the first time: the image
+build (about 3.8 GB) and the search model download both happen before the dashboard starts, and
+Whisper downloads on the first spoken question. Later starts reuse everything. The first
 start also logs an index rebuild of an empty corpus; that is expected.
 
 The containers start with no documents: upload yours from the dashboard. They are kept in Docker
