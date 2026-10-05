@@ -33,7 +33,6 @@ class DocumentChunker:
         Processes a list of documents and injects citation markers into each chunk.
         """
         all_chunks = []
-        global_chunk_id = 0
         
         for doc in documents:
             text = doc["content"]
@@ -61,10 +60,10 @@ class DocumentChunker:
                     metadata["page"] = page
 
                 all_chunks.append({
-                    "id": f"chunk_{global_chunk_id}",
+                    # Content addressed, so re-ingesting the same text gives the same ids
+                    "id": f"{doc_hash[:16]}_{i}",
                     "content": augmented_chunk_text,
                     "metadata": metadata
                 })
-                global_chunk_id += 1
                 
         return all_chunks

@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from typing import List, Dict
 from src.embeddings.embedder import DenseEmbedder
 from src.utils.config import pick
@@ -20,7 +21,8 @@ except ImportError:
 
 # Bump when the chunk layout changes, so an older index is rebuilt at startup.
 # 2: PDFs are chunked page by page and their headers cite "Page: N".
-INDEX_FORMAT_VERSION = 2
+# 3: chunk ids come from a SHA256 content fingerprint, so they are the same on every run.
+INDEX_FORMAT_VERSION = 3
 INDEX_MARKER = "index_version.json"
 
 
@@ -142,12 +144,9 @@ class VectorDBManager:
 
             qdrant_points = []
             for i, chunk in enumerate(chunks):
-                # Generate a unique integer ID by hashing the chunk ID
-                hashed_id = abs(hash(chunk["id"])) % (10 ** 15)
-                
                 qdrant_points.append(
                     models.PointStruct(
-                        id=hashed_id,
+                        id=str(uuid.uuid5(uuid.NAMESPACE_URL, chunk["id"])),   # stable across runs
                         vector=embeddings[i],
                         payload={
                             "content": chunk["content"],

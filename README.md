@@ -1,8 +1,8 @@
-# V-RAG: Enterprise Voice-Enabled RAG Pipeline
+# V-RAG: Voice Enabled RAG Pipeline
 
-A low-latency, zero-hallucination question-answering system for your own documents. Ask by typing or
-by speaking, and get an answer drawn only from the documents you supplied —
-with the sources it used.
+A question answering system for your own documents that refuses rather than guesses. Ask by typing
+or by speaking, and get an answer drawn only from the documents you supplied, with the file and page
+it came from.
 
 Everything runs on your machine. No cloud APIs, no vendor keys, no data leaving the laptop.
 
@@ -23,6 +23,21 @@ Everything runs on your machine. No cloud APIs, no vendor keys, no data leaving 
 | **I** | Inspect Continuously | Monitor quality metrics continuously — context relevance, faithfulness and answer relevance — to catch performance drift immediately. |
 | **C** | Cache & Invalidate | Implement an exact and semantic two-level caching layer to save latency and cost, invalidating entries the second a source document changes. |
 
+These are the article's principles. Here is how far V-RAG implements each one today:
+
+| Step | In V-RAG |
+| :--- | :--- |
+| **S** | Done: Unicode normalization, cleanup, and a SHA256 content fingerprint per document, so the same file gets the same chunk ids on every run. |
+| **Y** | Done: Tantivy keyword search (BM25) and Qdrant meaning search, merged with reciprocal rank fusion. |
+| **N** | Not yet: Qdrant runs in embedded local mode, which compares the query with every stored vector (exact search, no ANN index). Fine at a few hundred chunks; not tested at millions. |
+| **C** | Done: FlashRank cross encoder (`ms-marco-MiniLM-L-12-v2`) reorders the candidates. |
+| **H** | Partly: the gate uses the reranker score only (refuses below 0.65). No freshness or authority scoring. |
+| **R** | Done: a strict system prompt and temperature 0.0. |
+| **O** | Partly: every answer cites file and page (PDFs) or chunk (text files). No paragraph offsets. |
+| **N** | Partly: spaCy NER flags names and codes that are not in the retrieved text, and citations to passages that were not retrieved are removed. A failed check is reported, not acted on yet. |
+| **I** | Partly: a manual Ragas quality gate and a latency benchmark, run on demand. No continuous monitoring. |
+| **C** | Done: exact and similar question caches, cleared whenever a document changes. |
+
 ## Credits
 
 This project is built on the S-Y-N-C-H-R-O-N-I-C framework described by **Vishal Mysore** in
@@ -33,16 +48,19 @@ implementation of them on a fully local stack.
 ---
 ## Project Screen Shots
 
-- Main Console 
-  ![Main Console](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Main_dashboard.png)
+- Main console
+  ![Main Console](assets/Main_dashboard.png)
 
-- Corpus Tab
-  ![Corpus Tab](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/Corpus_Tab.png)
+- Corpus tab
+  ![Corpus Tab](assets/Corpus_Tab.png)
 
-- Engish Audio Query Result 
-  ![English Query Result](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/English_query_res.png)
+- English spoken question and answer
+  ![English Query Result](assets/English_query_res.png)
 
-  [Sample Audio Output](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/raw/main/assets/audio_outputs/english_sample_output.wav)
+  [Sample audio output](assets/audio_outputs/english_sample_output.wav)
+
+The screenshots and the audio sample were recorded before page citations and before spoken answers
+were cleaned of formatting, so they show chunk citations and the sample reads a list marker aloud.
 ---
 ## Repository Layout
 
@@ -51,8 +69,7 @@ Voice_Enabled_RAG_Pipeline/
 ├── .github/
 │   └── workflows/
 │       └── rag_eval_ci.yml          # CI: fast tests on every PR, Ragas gate on demand
-├── assest/
-│   └── RAG_Architecture.png         # Architecture diagram
+├── assets/                          # Screenshots, the architecture diagram, an audio sample
 ├── config/
 │   └── config.yaml                  # Every tunable setting: models, thresholds, paths, cache
 ├── data/
@@ -75,26 +92,28 @@ Voice_Enabled_RAG_Pipeline/
 │   ├── retrieval/
 │   │   ├── query_rewriter.py        # Resolves pronouns in multi-turn conversation
 │   │   ├── reranker.py              # FlashRank cross-encoder scoring
-│   │   └── retriever.py             # Reciprocal rank fusion and the 0.65 confidence gate
+│   │   └── retriever.py             # Search, reranking and the 0.65 confidence gate
 │   ├── prompts/
 │   │   └── prompt_template.py       # Hard-constrained system prompts
 │   ├── llm/
 │   │   └── llm_client.py            # Streaming Ollama client, temperature 0.0
 │   ├── voice/
 │   │   ├── stt.py                   # Faster-Whisper speech transcription
-│   │   └── tts.py                   # Kokoro-82M speech synthesis
+│   │   └── tts.py                   # Kokoro 82M speech synthesis
+│   ├── eval/
+│   │   └── latency_benchmark.py     # Times every stage over the golden questions
 │   ├── verification/
 │   │   └── guard_rails.py           # spaCy NER and citation grounding checks
 │   └── utils/
 │       ├── config.py                # Reads config.yaml
 │       ├── query_cache.py           # Two-level cache with corpus invalidation
-│       ├── text_sanitizer.py        # Strips citation markers before speech
+│       ├── text_sanitizer.py        # Citation tags, and cleaning answers for speech
 │       ├── audio_utils.py           # Audio resampling and format conversion
 │       └── metrics.py               # Per-stage latency tracing
-├── tests/                           # 59 fast tests, 2 integration tests, 1 quality gate
+├── tests/                           # 69 fast tests, 2 integration tests, 2 quality gate tests
 ├── app.py                           # Gradio dashboard entry point
 ├── main.py                          # FastAPI backend entry point
-├── docker-compose.yml               # Ollama + app containers
+├── docker-compose.yml               # Ollama, API and dashboard containers
 ├── Dockerfile
 ├── requirements.txt
 └── README.md
@@ -104,48 +123,60 @@ Voice_Enabled_RAG_Pipeline/
 
 ## Architecture
 
-![V-RAG architecture](https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline/blob/main/assets/RAG_Architecture.png)
+![V-RAG architecture](assets/RAG_Architecture.png)
 
 A question travels through the pipeline in stages. Each stage can stop it: if the documents don't
 contain a trustworthy answer, the system refuses rather than inventing one.
 
 1. **Understand the question.** Speech is transcribed. Follow-up questions like *"how do I scale it?"*
    are rewritten into standalone ones.
-2. **Search twice.** A keyword search and a meaning-based search run in parallel, then their results
-   are merged: one catches exact terms and error codes, the other catches paraphrases.
+2. **Search twice.** A keyword search and a meaning search run one after the other (about 11 ms
+   together), then their results are merged: one catches exact terms and error codes, the other
+   catches paraphrases. Running the two in parallel was measured and saved nothing.
 3. **Re-read the shortlist.** A slower, more careful model re-reads the top candidates against the
    question and reorders them.
 4. **Decide whether to answer.** If the best passage scores below 0.65, the pipeline stops here and
    says it doesn't know. The language model is never called.
 5. **Answer under constraint.** The model writes an answer using only the supplied passages, with
    creativity switched off.
-6. **Check the answer.** Facts and names in the answer are verified against the source text, and the
-   sources actually used are attached.
+6. **Check the answer.** Names and codes in the answer are checked against the retrieved text, and
+   citations to passages that weren't retrieved are removed. A failed check is reported in the
+   trace; it does not yet stop the answer. The file and page of each source are attached.
 
 ---
 
 ## How well does it work?
 
-Four checks run against a set of 67 questions:  47 answerable from the documents, and 20 designed to
+Four checks run against a set of 67 questions: 47 answerable from the documents, and 20 designed to
 tempt the system into making something up.
 
 | What is measured | Target | Result |
 | --- | --- | --- |
-| Answers supported by the documents | ≥ 85% | **87%** |
-| Answers that address the question asked | ≥ 85% | **95%** |
+| Answers supported by the documents (Ragas faithfulness) | ≥ 0.85 | **0.868** |
+| Answers that address the question asked (Ragas answer relevancy) | ≥ 0.85 | **0.953** |
 | Trick questions correctly refused | 100% | **20 of 20** |
-| Answerable questions actually answered | ≥ 90% | **94%** |
+| Answerable questions actually answered | ≥ 90% | **44 of 47 (94%)** |
+
+The two Ragas scores average the 44 answered questions, graded by a local `llama3.1:8b` judge through
+Ollama. They come from one recorded run on 2026-08-21 over the Microsoft Azure Essentials book, before
+page level chunking (the index then had 224 chunks; it now has 379), and have not been rerun since.
+The full output is in [`docs/ragas_gate_run.txt`](docs/ragas_gate_run.txt).
 
 ## How fast is it?
 
-On a laptop CPU, with no GPU:
+Measured with `python -m src.eval.latency_benchmark` on an Apple M5 with 16 GB, with the answer model
+(`llama3.2:3b`) running fully on the GPU through Ollama. Medians, with the slow case (p95) in brackets:
 
 | | Time |
 | --- | ---: |
-| Typed question, first time | ~2.3 seconds |
-| Typed question, asked again | **~2 milliseconds** |
-| Question it refuses to answer | ~0.7 seconds |
-| Spoken question, start to spoken answer | ~9 seconds |
+| Typed question, first time | 6.7 s (10.2 s) |
+| Typed question, asked again (cached) | about 1 ms |
+| Question it refuses to answer | 1.2 s |
+| Spoken question, start to spoken answer | 10.6 s (30.7 s) |
+
+Writing the answer takes most of the time (5.4 s median), then reranking (1.2 s). The spoken numbers
+cover 10 questions, so the bracketed figure is the slowest of them; long answers take longest to
+speak. Run on 2026-10-03, on commit `744d199` plus the then uncommitted page citation work. Your numbers depend on your machine.
 
 ---
 
@@ -308,5 +339,5 @@ The commands in this README are for macOS and Linux.
   extends to Tamil, Bengali, Spanish and others without touching the search engine.
 - **Documents in other languages.** Today the documents themselves must be English. A multilingual
   embedding model would lift that limit.
-- **Running on a GPU.** Would take spoken replies from seconds to well under one, and is the only way
-  to reach the original sub-second target.
+- **Faster spoken answers.** Speak each sentence as soon as it is written, instead of waiting for the
+  whole answer, so the first words come out in a fraction of today's time.

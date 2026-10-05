@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import unicodedata
@@ -59,7 +60,7 @@ class DocumentLoader:
         if not os.path.exists(self.raw_data_dir):
             return documents
 
-        for filename in os.listdir(self.raw_data_dir):
+        for filename in sorted(os.listdir(self.raw_data_dir)):   # same order on every run
             file_path = os.path.join(self.raw_data_dir, filename)
             
             pages = None
@@ -76,8 +77,8 @@ class DocumentLoader:
                     "content": clean_text,
                     "metadata": {
                         "source": filename,
-                        # Hash the document text to act as a unique document ID
-                        "doc_hash": str(hash(clean_text))
+                        # Content fingerprint: the same text gives the same value on every run
+                        "doc_hash": hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
                     }
                 }
                 if pages is not None:
