@@ -1,3 +1,4 @@
+"""config.yaml drives the modules: values reach them, explicit arguments win, missing keys fall back."""
 import textwrap
 
 import pytest
@@ -39,3 +40,17 @@ def test_missing_keys_fall_back_to_defaults(custom_config):
     assert cfg.get("retrieval.confidence_threshold") == 0.42
     assert cfg.get("retrieval.nonexistent_key", "fallback") == "fallback"
     assert cfg.get("entirely.missing.path", 7) == 7
+
+
+def test_the_image_installs_torch_and_torchvision_from_the_same_cpu_index():
+    """A PyPI torchvision is built for CUDA torch; beside CPU torch it broke `import timm`, so the
+    table detector failed to load in Docker and table reading silently fell back to none (spec 0004)."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    pins = dict(re.findall(r"^(torch|torchvision)==(\S+)", (root / "requirements.txt").read_text(), re.M))
+    assert set(pins) == {"torch", "torchvision"}, "torch and torchvision must both be pinned"
+
+    dockerfile = (root / "Dockerfile").read_text()
+    cpu_install = dockerfile[dockerfile.index("download.pytorch.org/whl/cpu"):dockerfile.index("pip install --no-cache-dir -r")]
+    assert "^torch==" in cpu_install and "^torchvision==" in cpu_install

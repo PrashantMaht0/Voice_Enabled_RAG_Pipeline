@@ -27,14 +27,49 @@ STRICT OPERATIONAL RULES:
    column headings. No conversational filler (e.g., "Sure, I can help").
 """
 
+# The short first answer style (spec 0006, short-first-sentence child): rules 2 and 5 change, 1, 3 and 4 do not,
+# so a short direct first sentence is written, checked and spoken sooner.
+_SHORT_FIRST_RULE_2 = """2. Answer first: the first sentence gives the direct answer in the snippets' own words, shortened to fit rule 5.
+   If the question asks what something is, the following sentences give the definition the snippets state.
+   Never define a term from your own knowledge, and never introduce terms that do not appear in the snippets.
+"""
+_SHORT_FIRST_RULE_5 = """5. Shape: Start with ONE short sentence of 4 to 10 words that directly answers the question, followed by its
+   source tag. Then add one to three sentences of supporting detail from the snippets, each followed by its tag.
+   Every sentence is complete, with a subject and a verb. Never a bare fragment or a single word, never copied
+   table fragments or bare column headings. No conversational filler.
+
+Example of the shape (a made up document, not your snippets):
+Question: How long is the warranty?
+Answer: The warranty lasts two years. [Source: example-guide.pdf | Page: 3] It covers parts and labour but not accidental damage. [Source: example-guide.pdf | Page: 4]
+"""
+
+
+def _replace_rule(prompt: str, number: int, new_rule: str) -> str:
+    start = prompt.index(f"{number}. ")
+    following = prompt.find(f"\n{number + 1}. ", start)
+    end = following + 1 if following != -1 else len(prompt)
+    return prompt[:start] + new_rule + prompt[end:]
+
+
+SYSTEM_RAG_PROMPT_SHORT_FIRST = _replace_rule(_replace_rule(SYSTEM_RAG_PROMPT, 2, _SHORT_FIRST_RULE_2), 5,
+                                              _SHORT_FIRST_RULE_5)
+
+ANSWER_STYLES = {"full": SYSTEM_RAG_PROMPT, "short_first": SYSTEM_RAG_PROMPT_SHORT_FIRST}
+# Phrases only the example above contains; an answer holding one copied the example (spec 0006, AC-21).
+EXAMPLE_LEAK_PHRASES = ("example-guide", "warranty lasts two years")
+
+
+def system_prompt(style: str) -> str:
+    """The answer prompt for an answer style; an unknown style is today's full prompt."""
+    return ANSWER_STYLES.get(style, SYSTEM_RAG_PROMPT)
+
+
 # Rewrites a follow-up question into a standalone one.
 QUERY_REWRITE_PROMPT = """Given the recent conversation history and a follow-up question, rewrite the follow-up question into a standalone, unambiguous search query for documentation retrieval.
 
 Rules:
 - Resolve all pronouns (it, they, that, this) into their concrete subjects from history.
 - Preserve exact technical terms, error codes, and flags.
-- ALWAYS write the standalone query in English, even when the history or the follow-up question is
-  in another language or script. The search index is English-only.
 - If the follow-up question already stands on its own, return it unchanged.
 - Return ONLY the rewritten query without any commentary or explanations.
 

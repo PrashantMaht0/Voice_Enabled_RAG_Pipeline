@@ -1,3 +1,4 @@
+"""Retrieval: keyword and vector search on a small real index (integration) and the confidence gate."""
 import pytest
 
 from src.retrieval.retriever import HybridRetriever

@@ -20,7 +20,8 @@ from pathlib import Path
 import requests
 
 from src.utils.config import get
-from src.utils.text_sanitizer import is_refusal, sanitize_for_speech
+from src.voice.streaming import SentenceSpeaker, max_gap_ms
+from src.utils.text_sanitizer import is_refusal
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = REPO_ROOT / "data" / "eval" / "golden_dataset.json"
@@ -32,7 +33,7 @@ MAX_CONSECUTIVE_ERRORS = 3
 SHORT_TIMEOUT, QUERY_TIMEOUT = 5, 120
 PASSES = ("first", "repeat")
 TEXT_GROUPS = ("answered", "refused", "cache_hit")
-VOICE_METRICS = ("stt_ms", "query_ms", "clean_ms", "tts_ms", "total_ms")
+VOICE_METRICS = ("stt_ms", "query_ms", "first_audio_ms", "max_gap_ms", "tts_ms", "total_ms")
 
 NOTES = [
     "Every question is asked with empty history, so the follow-up rewriter (1B model) is never timed.",
@@ -42,10 +43,12 @@ NOTES = [
 
 
 class ApiUnavailable(Exception):
+    """The API (or Ollama behind it) is not reachable, so the run cannot start."""
     pass
 
 
 class Aborted(Exception):
+    """Too many failures in a row: the run stops early and saves what it has."""
     pass
 
 
@@ -60,12 +63,14 @@ def nearest_rank(values, q):
 
 
 def summarize(values):
+    """Count, p50 and p95 of the values."""
     return {"n": len(values), "p50": nearest_rank(values, 0.50), "p95": nearest_rank(values, 0.95)}
 
 
 # --- small helpers ---
 
 def normalize_host(host: str) -> str:
+    """The Ollama host as a URL (http:// added when missing)."""
     host = (host or "").strip().rstrip("/")
     return host if "://" in host else f"http://{host}"
 
@@ -76,10 +81,12 @@ def model_key(name: str) -> str:
 
 
 def words(text: str) -> str:
+    """Lowercase words only, for comparing a transcript with the question it should match."""
     return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
 
 def safe_label(label: str) -> str:
+    """The run label made safe for a file name."""
     return re.sub(r"[^a-z0-9_]", "_", (label or "run").lower()) or "run"
 
 
@@ -92,6 +99,7 @@ def fact(fn):
 
 
 def cpu_name():
+    """The processor's name (macOS or Linux), for the run file."""
     system = platform.system()
     if system == "Darwin":
         return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
@@ -104,10 +112,12 @@ def cpu_name():
 
 
 def ram_gb():
+    """Installed memory in GB, for the run file."""
     return round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3, 1)
 
 
 def git(*args):
+    """Output of a git command run in the repository."""
     return subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout.strip()
 
 
@@ -121,8 +131,10 @@ def default_speech():
 # --- the benchmark ---
 
 class Benchmark:
+    """One latency run against a running API: text passes (first and repeat) over the golden questions, then spoken
+    turns, saved as one JSON file."""
     def __init__(self, api_base, ollama_host, session=None, limit=None, skip_voice=False,
-                 label="run", golden_path=GOLDEN_PATH, out_dir=OUT_DIR, speech_factory=default_speech):
+                 label="run", golden_path=GOLDEN_PATH, out_dir=OUT_DIR, speech_factory=default_speech, power_reader=None):
         self.api = api_base.rstrip("/")
         self.ollama_host = normalize_host(ollama_host)
         self.session = session or requests.Session()
@@ -132,12 +144,14 @@ class Benchmark:
         self.golden_path = Path(golden_path)
         self.out_dir = Path(out_dir)
         self.speech_factory = speech_factory
+        self.power_reader = power_reader or power_state
         self.consecutive_errors = 0
         self.warnings = []
 
     # questions
 
     def load_questions(self):
+        """The golden questions (limited per kind when --limit is set) and the spoken subset."""
         golden = json.loads(self.golden_path.read_text(encoding="utf-8"))
         items = [{"id": i, "question": g["question"], "in_scope": bool(g.get("in_scope", True))}
                  for i, g in enumerate(golden)]
@@ -153,6 +167,7 @@ class Benchmark:
     # HTTP
 
     def preflight(self):
+        """Checks the API and Ollama are up and the cache can be cleared; returns the API's health."""
         try:
             health = self.session.get(f"{self.api}/health", timeout=SHORT_TIMEOUT).json()
         except Exception as e:
@@ -172,17 +187,39 @@ class Benchmark:
         return health
 
     def clear_cache(self):
+        """Empties the API's answer cache, so the first pass is uncached."""
         self.session.delete(f"{self.api}/cache", timeout=SHORT_TIMEOUT)
 
-    def ask(self, question):
-        """(response json or None, client ms, error or None)."""
+    def ask(self, question, on_sentence=None):
+        """(response or None, client ms, error or None) through /api/query/stream, as the dashboard asks.
+
+        The response holds the answer, trace, cache level and total from the `done` event, plus
+        `first_sentence_ms` (client time to the first approved sentence). `on_sentence(text)` is called
+        for each sentence as it arrives (the voice pass speaks them)."""
         started = time.perf_counter()
+        data, first_sentence_ms = None, None
         try:
-            response = self.session.post(f"{self.api}/query", json={"query": question, "history": []},
-                                         timeout=QUERY_TIMEOUT)
+            with self.session.post(f"{self.api}/query/stream", json={"query": question, "history": []},
+                                   timeout=QUERY_TIMEOUT, stream=True) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    if event["type"] == "sentence":
+                        if first_sentence_ms is None:
+                            first_sentence_ms = (time.perf_counter() - started) * 1000
+                        if on_sentence:
+                            on_sentence(event["text"])
+                    elif event["type"] == "done":
+                        data = {"answer": event.get("answer", ""), "trace": event.get("trace", []),
+                                "cache": event.get("cache"), "total_latency_ms": event.get("total_ms"),
+                                "path": event.get("path"), "first_sentence_ms": first_sentence_ms}
+                    elif event["type"] == "error":
+                        raise RuntimeError(event.get("detail") or "stream error")
             client_ms = (time.perf_counter() - started) * 1000
-            response.raise_for_status()
-            data = response.json()
+            if data is None:
+                raise RuntimeError("the stream ended without a done event")
         except Exception as e:
             return None, (time.perf_counter() - started) * 1000, str(e) or type(e).__name__
         if str(data.get("answer", "")).strip().startswith(MODEL_ERROR):
@@ -199,10 +236,11 @@ class Benchmark:
 
     @staticmethod
     def text_record(pass_name, item, data, client_ms, error):
+        """One typed question's record: path, stage times from the trace, totals, first sentence time and any error."""
         record = {"pass": pass_name, "id": item["id"], "in_scope": item["in_scope"],
                   "path": None, "refused": None, "gated": None, "cache": None,
                   "stages": {}, "untraced_ms": None, "server_total_ms": None,
-                  "client_ms": client_ms, "error": error}
+                  "first_sentence_ms": None, "client_ms": client_ms, "error": error}
         if data is None or error:
             return record   # errors carry no path and never enter a percentile
         trace = data.get("trace", [])
@@ -219,10 +257,12 @@ class Benchmark:
             "stages": stages,
             "server_total_ms": total,
             "untraced_ms": None if total is None else total - sum(stages.values()),
+            "first_sentence_ms": data.get("first_sentence_ms"),
         })
         return record
 
     def text_pass(self, pass_name, questions):
+        """Asks every question once and records each answer."""
         records = []
         for item in questions:
             data, client_ms, error = self.ask(item["question"])
@@ -234,6 +274,8 @@ class Benchmark:
     # voice
 
     def voice_turns(self, questions, records):
+        """Speaks each voice question with Kokoro, transcribes it, asks through the stream and synthesizes the answer
+        sentence by sentence; False when a speech model is in mock mode."""
         from src.utils.audio_utils import float32_to_int16, int16_to_float32, resample_audio
 
         stt, tts = self.speech_factory()
@@ -251,11 +293,12 @@ class Benchmark:
             for item in questions:
                 rate, pcm = audio[item["id"]]
                 record = {"pass": pass_name, "id": item["id"], "transcript": None, "transcript_matches": None,
-                          "stt_ms": None, "query_ms": None, "clean_ms": None, "tts_ms": None,
-                          "total_ms": None, "cache": None, "refused": None, "spoken_chars": None,
-                          "audio_s": None, "error": None}
+                          "stt_ms": None, "query_ms": None, "first_audio_ms": None, "max_gap_ms": None,
+                          "tts_ms": None, "total_ms": None, "cache": None, "refused": None, "sentences": None,
+                          "spoken_chars": None, "audio_s": None, "error": None}
                 started = time.perf_counter()
-                # Same steps as app.voice_query: resample to 16 kHz, then transcribe
+                # Same steps as app.voice_query: resample to 16 kHz, transcribe, then speak each streamed
+                # sentence on a worker thread as soon as it arrives (spec 0006)
                 mono = resample_audio(int16_to_float32(pcm), orig_sr=rate, target_sr=16000)
                 transcript = stt.transcribe(float32_to_int16(mono).tobytes())
                 record["stt_ms"] = (time.perf_counter() - started) * 1000
@@ -264,21 +307,26 @@ class Benchmark:
                 if not transcript.strip():
                     record["error"] = "empty transcript"
                 else:
-                    data, record["query_ms"], record["error"] = self.ask(transcript)
+                    speaker = SentenceSpeaker(tts)
+                    data, record["query_ms"], record["error"] = self.ask(transcript, on_sentence=speaker.say)
+                    stream_done = time.perf_counter()
+                    speaker.close()
+                    spoken = list(speaker.ready(wait=True))
                     if record["error"] is None:
                         record["cache"] = data.get("cache")
                         record["refused"] = is_refusal(data.get("answer", ""))
-                        t = time.perf_counter()
-                        spoken = sanitize_for_speech(data.get("answer", ""))
-                        record["clean_ms"] = (time.perf_counter() - t) * 1000
-                        t = time.perf_counter()
-                        out_rate, out = tts.synthesize_array(spoken) if spoken else (24000, [])
-                        record["tts_ms"] = (time.perf_counter() - t) * 1000
-                        record["spoken_chars"] = len(spoken)
-                        record["audio_s"] = len(out) / out_rate
+                    if spoken:
+                        first_ready = spoken[0].ready_at
+                        record["first_audio_ms"] = (first_ready - started) * 1000
+                        record["max_gap_ms"] = max_gap_ms(first_ready, spoken)
+                        record["tts_ms"] = max(0.0, (spoken[-1].ready_at - stream_done) * 1000)
+                        record["sentences"] = len(spoken)
+                        record["spoken_chars"] = sum(len(s.text) for s in spoken)
+                        record["audio_s"] = round(sum(s.duration_s for s in spoken), 2)
                 record["total_ms"] = (time.perf_counter() - started) * 1000
                 records.append(record)
-                print(f"  [voice {pass_name}] {item['id']:>2} {record['total_ms']:8.0f} ms"
+                print(f"  [voice {pass_name}] {item['id']:>2} first audio {record['first_audio_ms'] or 0:8.0f} ms"
+                      f"  gap {record['max_gap_ms'] or 0:6.0f} ms  total {record['total_ms']:8.0f} ms"
                       f"{'  ERROR ' + record['error'] if record['error'] else ''}")
                 self.track(record["error"])
         return True
@@ -286,6 +334,7 @@ class Benchmark:
     # facts
 
     def placement(self, model):
+        """Where Ollama holds the answer model (gpu, cpu or a mix) and its sizes."""
         def read():
             models = self.session.get(f"{self.ollama_host}/api/ps", timeout=SHORT_TIMEOUT).json().get("models", [])
             for m in models:
@@ -297,6 +346,8 @@ class Benchmark:
         return fact(read) or {"placement": None, "size": None, "size_vram": None}
 
     def facts(self, health):
+        """The run file's meta block: label, time, commit, API, machine, checker, model, corpus, golden set hash and
+        config."""
         return {
             "label": self.label,
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -304,6 +355,7 @@ class Benchmark:
             "git_dirty": fact(lambda: bool(git("status", "--porcelain", "--untracked-files=no"))),
             "api_base": self.api,
             "machine": {"os": fact(platform.platform), "cpu": fact(cpu_name), "ram_gb": fact(ram_gb)},
+            "grounding_checker_effective": health.get("grounding_checker_effective"),
             "ollama": {"host": self.ollama_host, "model": health.get("generation_model")},
             "corpus": fact(lambda: self.session.get(f"{self.api}/corpus", timeout=SHORT_TIMEOUT).json()),
             "golden_sha256": fact(lambda: hashlib.sha256(self.golden_path.read_bytes()).hexdigest()),
@@ -315,6 +367,7 @@ class Benchmark:
 
     @staticmethod
     def summarize_run(text, voice):
+        """p50 and p95 per metric, grouped by pass and by answered, refused, cache hit and voice."""
         summary = {}
         for pass_name in PASSES:
             ok = [r for r in text if r["pass"] == pass_name and r["error"] is None]
@@ -324,7 +377,7 @@ class Benchmark:
                 stage_names = sorted({name for r in rows for name in r["stages"]})
                 metrics = {name: summarize([r["stages"][name] for r in rows if name in r["stages"]])
                            for name in stage_names}
-                for key in ("untraced_ms", "server_total_ms", "client_ms"):
+                for key in ("untraced_ms", "server_total_ms", "first_sentence_ms", "client_ms"):
                     metrics[key] = summarize([r[key] for r in rows if r[key] is not None])
                 groups[group] = {"n": len(rows), "metrics": metrics}
             vrows = [r for r in voice if r["pass"] == pass_name and r["error"] is None]
@@ -340,6 +393,7 @@ class Benchmark:
         return summary
 
     def write(self, run):
+        """Saves the run as data/benchmarks/<time>-<label>.json without overwriting an existing file."""
         self.out_dir.mkdir(parents=True, exist_ok=True)
         stem = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self.label}"
         for n in range(1, 100):
@@ -354,12 +408,14 @@ class Benchmark:
 
     @staticmethod
     def report(run):
+        """Prints the run's summary table."""
         meta, summary = run["meta"], run["summary"]
         machine, ollama = meta["machine"], meta["ollama"]
         print("\n" + "=" * 72)
         print(f"Latency benchmark · {meta['label']} · {meta['started_at']} · commit {meta['git_commit']}"
               f"{' (dirty)' if meta['git_dirty'] else ''}")
-        print(f"Machine: {machine['cpu']} · {machine['ram_gb']} GB · {machine['os']}")
+        print(f"Machine: {machine['cpu']} · {machine['ram_gb']} GB · {machine['os']} · {power_line(machine.get('power'))}"
+              f" · checker {meta.get('grounding_checker_effective') or 'unknown'}")
         print(f"Model:   {ollama['model']} at {ollama['host']} · placement start "
               f"{ollama['placement_start']}, end {ollama['placement_end']}")
 
@@ -382,9 +438,12 @@ class Benchmark:
             print(f"Note: {line}")
 
     def run(self):
+        """The whole run: preflight, warm up, cleared cache, both text passes, voice, power readings, then save and
+        report."""
         health = self.preflight()
         questions, voice_questions = self.load_questions()
         meta = self.facts(health)
+        power_start = self.power_reader()
         model = health.get("generation_model") or ""
         text, voice, aborted = [], [], None
         voice_valid = False
@@ -403,11 +462,12 @@ class Benchmark:
         except Aborted as e:
             aborted = str(e)
         end = self.placement(model)
+        meta["machine"]["power"] = power_record(power_start, self.power_reader())
 
         meta["ollama"].update({"placement_start": start["placement"], "placement_end": end["placement"],
                                "size": end["size"] or start["size"], "size_vram": end["size_vram"] or start["size_vram"]})
         meta.update({"voice_valid": voice_valid, "aborted": bool(aborted), "abort_reason": aborted,
-                     "warnings": self.warnings, "resampler": fact(_resampler),
+                     "warnings": self.warnings, 
                      "questions": {"in_scope": sum(q["in_scope"] for q in questions),
                                    "out_of_scope": sum(not q["in_scope"] for q in questions),
                                    "voice": len(voice_questions) if voice_valid else 0}})
@@ -416,15 +476,45 @@ class Benchmark:
         return self.write(run), run
 
 
-def _resampler():
+PMSET = "/usr/bin/pmset"
+POWER_SOURCES = {"AC Power": "AC", "Battery Power": "Battery"}
+
+
+def power_state(run=subprocess.run) -> dict:
+    """Power source and Low Power Mode from pmset (spec 0006, AC-23); null when either cannot be read."""
+    state = {"source": None, "low_power_mode": None}
     try:
-        import librosa  # noqa: F401
-        return "librosa"
-    except ImportError:
-        return "numpy"
+        batt = run([PMSET, "-g", "batt"], capture_output=True, text=True, timeout=3).stdout
+        m = re.search(r"drawing from '([^']+)'", batt.splitlines()[0] if batt else "")
+        state["source"] = POWER_SOURCES.get(m.group(1)) if m else None
+    except Exception:
+        pass
+    try:
+        settings = run([PMSET, "-g"], capture_output=True, text=True, timeout=3).stdout
+        m = re.search(r"^\s*lowpowermode\s+([01])\s*$", settings or "", re.M)
+        state["low_power_mode"] = (m.group(1) == "1") if m else None
+    except Exception:
+        pass
+    return state
+
+
+def power_record(start: dict, end: dict) -> dict:
+    """The run's power state: the start reading, or nulls with changed=True when it moved during the run."""
+    if start != end:
+        return {"source": None, "low_power_mode": None, "changed": True}
+    return {**start, "changed": False}
+
+
+def power_line(power) -> str:
+    """The printed power description, e.g. `power AC, Low Power Mode off`."""
+    if not power or power.get("source") is None:
+        return "power unknown" + (" (changed during the run)" if power and power.get("changed") else "")
+    lpm = {True: "on", False: "off", None: "unknown"}[power.get("low_power_mode")]
+    return f"power {power['source']}, Low Power Mode {lpm}"
 
 
 def main(argv=None):
+    """Command line entry: `python -m src.eval.latency_benchmark --label NAME [--limit N] [--skip-voice]`."""
     parser = argparse.ArgumentParser(description="Per stage latency benchmark over the golden questions.")
     parser.add_argument("--label", default="run")
     parser.add_argument("--limit", type=int, default=None, help="first N questions of each kind")

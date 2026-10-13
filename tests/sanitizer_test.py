@@ -1,3 +1,4 @@
+"""Spoken answers: citations, partial tags, bullets and formatting symbols are never read aloud; prose is unchanged."""
 from src.utils.text_sanitizer import (
     drop_incomplete_header,
     has_incomplete_header,

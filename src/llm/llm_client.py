@@ -1,7 +1,11 @@
-from typing import Any, Generator, List, Dict, Optional
+"""The local Ollama client: streamed answers from the retrieved chunks, and follow up rewriting."""
+from typing import Any, Dict, Generator, List, Optional
+
 import ollama
+
 from src.prompts.prompt_template import (
-    SYSTEM_RAG_PROMPT,
+    ANSWER_STYLES,
+    system_prompt,
     QUERY_REWRITE_PROMPT,
     FALLBACK_RESPONSE,
     build_rag_context_prompt,
@@ -10,7 +14,8 @@ from src.prompts.prompt_template import (
 from src.utils.config import pick
 
 class LocalLLMClient:
-    """Local Ollama client for streaming, temperature-0 generation."""
+    """Answers with `llm.generation_model` and rewrites follow ups with `llm.rewriter_model`, both at
+    temperature 0 so the same question gets the same answer."""
 
     def __init__(
         self,
@@ -22,6 +27,10 @@ class LocalLLMClient:
         self.rewriter_model = pick(rewriter_model, "llm.rewriter_model", "llama3.2:1b")
         self.temperature = pick(None, "llm.temperature", 0.0)
         self.max_tokens = pick(None, "llm.max_tokens", 256)
+        self.answer_style = pick(None, "llm.answer_style", "full")
+        if self.answer_style not in ANSWER_STYLES:
+            print(f"[LLM] WARNING: unknown llm.answer_style {self.answer_style!r}, using 'full'")
+            self.answer_style = "full"
         self.client = ollama.Client(host=host) if host else ollama
         
         # Stores the final token count after generation finishes
@@ -43,7 +52,7 @@ class LocalLLMClient:
             )
             rewritten = response["message"]["content"].strip().strip('"')
             return rewritten if rewritten else query
-        except Exception as e:
+        except Exception:
             return query
 
     def stream_generate(
@@ -51,14 +60,16 @@ class LocalLLMClient:
         query: str,
         context_chunks: List[str]
     ) -> Generator[str, None, None]:
-        """Yields tokens individually and captures metadata when finished."""
+        """The answer's tokens as Ollama streams them; the fallback refusal when no chunk passed the gate.
+
+        last_eval_count holds the number of generated tokens once the stream ends."""
         self.last_eval_count = 0
         
         if not context_chunks:
             yield FALLBACK_RESPONSE
             return
 
-        system_instruction = SYSTEM_RAG_PROMPT.format(fallback=FALLBACK_RESPONSE)
+        system_instruction = system_prompt(self.answer_style).format(fallback=FALLBACK_RESPONSE)
         user_content = build_rag_context_prompt(query, context_chunks)
 
         messages = [
@@ -83,24 +94,18 @@ class LocalLLMClient:
                 if token:
                     yield token
                     
-                # Ollama returns metadata on the final streaming chunk
-                if chunk.get("done", False):
-                    # eval_count represents the number of output tokens generated
+                if chunk.get("done", False):          # the last chunk carries the token count
                     self.last_eval_count = chunk.get("eval_count", 0)
 
         except Exception as e:
             yield f" Error processing response: {str(e)}"
 
     def generate(self, query: str, context_chunks: List[str], tracer: Optional[Any] = None) -> str:
-        """
-        Synchronous generation helper that optionally integrates with the PipelineTracer.
-        """
-        if tracer: tracer.start_span("generation")
-        
-        tokens = list(self.stream_generate(query, context_chunks))
-        full_text = "".join(tokens).strip()
-        
-        if tracer: 
+        """The whole answer at once (the stream joined), timed as the "generation" span when a tracer is
+        given. Used where a client has no stream_generate."""
+        if tracer:
+            tracer.start_span("generation")
+        full_text = "".join(self.stream_generate(query, context_chunks)).strip()
+        if tracer:
             tracer.end_span("generation", f"LLM call — {self.last_eval_count} tokens generated")
-            
         return full_text

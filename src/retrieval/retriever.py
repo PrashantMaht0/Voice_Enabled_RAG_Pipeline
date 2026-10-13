@@ -1,10 +1,16 @@
-from typing import List, Tuple, Any, Optional
-from src.vector_db.hybrid_store import HybridStore
+"""Retrieval for one question: hybrid search, cross encoder reranking, then the confidence gate."""
+from typing import Any, Dict, List, Optional, Tuple
+
 from src.retrieval.reranker import CrossEncoderReranker
 from src.utils.config import pick
+from src.vector_db.hybrid_store import HybridStore
+
 
 class HybridRetriever:
-    """Hybrid retrieval, cross-encoder reranking and the confidence gate."""
+    """Keyword and vector search (one after the other: running them in parallel measured no faster in
+    scope feature 3), fusion, reranking of a small pool, and the gate: only chunks scoring at least
+    `retrieval.confidence_threshold` reach the answer model."""
+
     def __init__(self, confidence_threshold: float = None, top_k_rerank: int = None,
                  top_k_candidates: int = None, top_k_retrieval: int = None):
         self.store = HybridStore()
@@ -16,40 +22,44 @@ class HybridRetriever:
         self.top_k_candidates = pick(top_k_candidates, "retrieval.top_k_rerank_pool", 12)
 
     def search_and_rerank(self, query: str, tracer: Optional[Any] = None) -> Tuple[List[str], float]:
-        # 1. Sparse Search
+        """(chunks that passed the gate, the top reranker score)."""
+        chunks, score, _ = self.search_and_rerank_detailed(query, tracer)
+        return chunks, score
+
+    def search_and_rerank_detailed(self, query: str, tracer: Optional[Any] = None) -> Tuple[List[str], float, List[Dict]]:
+        """Chunks, the top score, and for each kept chunk its id, source, page, kind and score (spec 0006)."""
         if tracer: tracer.start_span("bm25")
         sparse_candidates = self.store.search_sparse(query, top_k=self.top_k_retrieval)
         if tracer: tracer.end_span("bm25", f"Keyword search — {len(sparse_candidates)} candidates")
 
-        # 2. Dense Search
         if tracer: tracer.start_span("vector")
         dense_candidates = self.store.search_dense(query, top_k=self.top_k_retrieval)
         if tracer: tracer.end_span("vector", f"ANN search — {len(dense_candidates)} candidates")
         
-        # 3. Hybrid Fusion over the candidates already fetched above
         if tracer: tracer.start_span("fusion")
         candidates = self.store.fuse(dense_candidates, sparse_candidates, top_k=self.top_k_candidates)
         if tracer: tracer.end_span("fusion", f"Hybrid merge — {len(candidates)} unique candidates")
 
         if not candidates:
-            return [], 0.0
+            return [], 0.0, []
 
-        # 4. Precision Reranking (Cross-Encoder)
         if tracer: tracer.start_span("rerank")
         ranked_results = self.reranker.rerank(query, candidates)
         if tracer: tracer.end_span("rerank", f"Cross-encoder scored {len(candidates)} chunks")
         
-        # 5. Apply the Hard Threshold Gate
-        valid_chunks = []
+        # The gate: the top top_k_rerank chunks that score at least the threshold
+        valid_chunks, details = [], []
         highest_score = 0.0
-        
         for i, res in enumerate(ranked_results[:self.top_k_rerank]):
-            score = float(res["score"]) # Cast to float to prevent JSON serialization errors
-            
+            score = float(res["score"])           # a numpy float does not serialize to JSON
             if i == 0:
                 highest_score = score
-                
             if score >= self.confidence_threshold:
                 valid_chunks.append(res["chunk"])
-                
-        return valid_chunks, highest_score
+                meta = res.get("metadata") or {}
+                doc_hash, index = meta.get("doc_hash", ""), meta.get("chunk_index")
+                details.append({"chunk_id": f"{doc_hash[:16]}_{index}" if index is not None else None,
+                                "source": meta.get("source"), "page": meta.get("page"),
+                                "kind": meta.get("kind", "text"), "score": round(score, 4)})
+
+        return valid_chunks, highest_score, details

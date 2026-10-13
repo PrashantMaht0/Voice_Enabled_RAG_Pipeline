@@ -1,3 +1,4 @@
+"""The API contract the dashboard relies on: health, query responses, corpus deletion and upload, with fake models."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -38,14 +39,6 @@ class _FakeRewriter:
         return "Scaling Azure App Service Web App"
 
 
-class _FakeGuard:
-    def strip_ungrounded_citations(self, answer, chunks):
-        return answer, []
-
-    def verify_assertions(self, answer, chunks):
-        return True
-
-
 @pytest.fixture
 def client(monkeypatch):
     """Bare app around the router so no lifespan warmup loads real models."""
@@ -57,7 +50,6 @@ def client(monkeypatch):
 def install(monkeypatch, retriever, llm, rewriter=None):
     monkeypatch.setattr(routes, "_retriever", retriever)
     monkeypatch.setattr(routes, "_llm", llm)
-    monkeypatch.setattr(routes, "_guard", _FakeGuard())
     monkeypatch.setattr(routes, "_rewriter", rewriter or _FakeRewriter())
 
 
@@ -72,17 +64,19 @@ def test_health_returns_200(client, monkeypatch):
 
 def test_query_returns_the_contract_the_dashboard_consumes(client, monkeypatch):
     llm = _FakeLLM()
-    install(monkeypatch, _FakeRetriever(["chunk text"], 0.99), llm)
+    chunk = "[Source: net.pdf | Chunk: 0]\nOpen port 443 for SSL."
+    install(monkeypatch, _FakeRetriever([chunk], 0.99), llm)
 
     body = client.post("/api/query", json={"query": "what port?"}).json()
 
     assert body["answer"].startswith("Port 443")
     assert body["confidence_score"] == pytest.approx(0.99)
-    assert body["retrieved_context"] == ["chunk text"]
-    assert body["grounded"] is True
+    assert body["retrieved_context"] == [chunk]
+    assert body["grounded"] is None          # no grounding checker configured (spec 0006)
     assert body["dropped_citations"] == []
     assert body["total_latency_ms"] > 0
-    assert {span["layer"] for span in body["trace"]} >= {"bm25", "confidence", "verification"}
+    assert {span["layer"] for span in body["trace"]} >= {"bm25", "confidence", "generation", "grounding"}
+    assert body["path"] == "answered" and body["trace_id"] is not None
     assert llm.calls == 1
 
 
@@ -125,14 +119,14 @@ def test_first_turn_skips_the_rewriter(client, monkeypatch):
     assert rewriter.seen_history is None, "The rewriter must not run on the first turn."
 
 
-# --- corpus deletion ---
+# --- corpus deletion and upload ---
 
 @pytest.fixture
 def corpus_dir(tmp_path, monkeypatch):
     """Isolated data/raw with ingestion stubbed out."""
     monkeypatch.setattr(routes, "RAW_DIR", str(tmp_path))
     rebuilds = []
-    monkeypatch.setattr(routes, "trigger_ingestion_pipeline", lambda: rebuilds.append(1))
+    monkeypatch.setattr(routes, "rebuild_index", lambda db_manager=None: rebuilds.append(1))
     (tmp_path / "manual.md").write_text("content")
     return tmp_path, rebuilds
 
@@ -164,4 +158,33 @@ def test_delete_cannot_escape_the_corpus_directory(client, corpus_dir, tmp_path_
 
     assert response.status_code in (400, 404)
     assert outside.exists(), "A file outside the corpus directory was deleted."
+    assert rebuilds == []
+
+
+def test_upload_saves_the_file_and_rebuilds_in_the_background(client, corpus_dir):
+    tmp_path, rebuilds = corpus_dir
+
+    body = client.post("/api/upload", files={"file": ("notes.md", b"# Notes")}).json()
+
+    assert body["filename"] == "notes.md"
+    assert (tmp_path / "notes.md").read_bytes() == b"# Notes"
+    assert rebuilds == [1]
+
+
+def test_upload_cannot_write_outside_the_corpus_directory(client, corpus_dir):
+    tmp_path, rebuilds = corpus_dir
+
+    body = client.post("/api/upload", files={"file": ("../escape.md", b"x")}).json()
+
+    assert body["filename"] == "escape.md"
+    assert (tmp_path / "escape.md").exists() and not (tmp_path.parent / "escape.md").exists()
+
+
+@pytest.mark.parametrize("name", ["virus.exe", "archive.zip", ""])
+def test_upload_refuses_other_file_types(client, corpus_dir, name):
+    tmp_path, rebuilds = corpus_dir
+
+    response = client.post("/api/upload", files={"file": (name, b"x")})
+
+    assert response.status_code in (400, 422)
     assert rebuilds == []

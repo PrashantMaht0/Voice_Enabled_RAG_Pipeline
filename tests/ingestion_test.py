@@ -1,3 +1,4 @@
+"""Ingestion: chunk size and overlap, citation headers, text normalization and stable fingerprints."""
 from src.ingestion.chunking import DocumentChunker
 from src.ingestion.loader import DocumentLoader
 

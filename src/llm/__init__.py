@@ -1,3 +1,1 @@
-from .llm_client import LocalLLMClient
-
-__all__ = ["LocalLLMClient"]
+"""The local Ollama client: answer generation and follow up rewriting."""

@@ -4,7 +4,7 @@ import pytest
 from src.api import routes
 from src.ingestion.chunking import DocumentChunker
 from src.ingestion.loader import DocumentLoader
-from src.verification.guard_rails import HallucinationGuard
+from src.verification.citations import strip_ungrounded_citations
 from src.vector_db.vector_store import INDEX_FORMAT_VERSION, VectorDBManager
 
 
@@ -113,7 +113,7 @@ def test_grounding_check_drops_pages_that_were_not_retrieved():
               "Blobs are cheap. [Source: a.pdf | Page: 7] "
               "Tables hold rows. [Source: notes.md | Page: 2]")
 
-    cleaned, removed = HallucinationGuard().strip_ungrounded_citations(answer, CHUNKS)
+    cleaned, removed = strip_ungrounded_citations(answer, CHUNKS)
 
     assert removed == ["[Source: a.pdf | Page: 7]", "[Source: notes.md | Page: 2]"]
     assert "[Source: a.pdf | Page: 3]" in cleaned
@@ -125,6 +125,7 @@ class _FakeManager:
     """Records ingest calls; borrows the real marker logic."""
     marker_path = VectorDBManager.marker_path
     index_format = VectorDBManager.index_format
+    index_tables = VectorDBManager.index_tables
     mark_index_format = VectorDBManager.mark_index_format
     clear_index_format = VectorDBManager.clear_index_format
 

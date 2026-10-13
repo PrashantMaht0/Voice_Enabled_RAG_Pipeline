@@ -1,5 +1,6 @@
 """Latency benchmark (spec 0003), with the API faked and the speech models stubbed."""
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,22 @@ class _Resp:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _StreamResp(_Resp):
+    """/api/query/stream: meta, one sentence, then done, built from the same answer the old fake returned."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_lines(self):
+        d = self._data
+        yield json.dumps({"type": "meta", "cache": d.get("cache")}).encode()
+        yield json.dumps({"type": "sentence", "index": 0, "text": d.get("answer", "")}).encode()
+        yield json.dumps({"type": "done", "answer": d.get("answer", ""), "trace": d.get("trace", []),
+                          "cache": d.get("cache"), "total_ms": d.get("total_latency_ms")}).encode()
 
 
 def answered(cache=None):
@@ -56,18 +73,19 @@ class FakeSession:
         self.cached.clear()
         return _Resp({})
 
-    def post(self, url, json=None, timeout=None):
+    def post(self, url, json=None, timeout=None, stream=False):
+        assert url.endswith("/query/stream"), "The benchmark asks through the stream, as the dashboard does"
         q = json["query"]
         if q in self.fail:
-            return _Resp({}, status=500)
+            return _StreamResp({}, status=500)
         if q in self.model_error:
-            return _Resp({"answer": " Error processing response: connection refused", "trace": [],
-                          "total_latency_ms": 1.0, "cache": None})
+            return _StreamResp({"answer": " Error processing response: connection refused", "trace": [],
+                                "total_latency_ms": 1.0, "cache": None})
         if self.cache_enabled and q in self.cached:
-            return _Resp({**self.cached[q], "cache": "exact", "total_latency_ms": 5.0,
-                          "trace": [{"layer": "cache", "elapsed_ms": 0.0}]})
+            return _StreamResp({**self.cached[q], "cache": "exact", "total_latency_ms": 5.0,
+                                "trace": [{"layer": "cache", "elapsed_ms": 0.0}]})
         self.cached[q] = answered() if q.startswith("in") else GATED
-        return _Resp(self.cached[q])
+        return _StreamResp(self.cached[q])
 
 
 @pytest.fixture
@@ -138,3 +156,51 @@ def test_voice_in_mock_mode_is_never_reported(tmp_path, golden):
     _, run = b.run()
 
     assert run["meta"]["voice_valid"] is False and run["voice"] == []
+
+
+# --- power state and checker in every run (spec 0006, AC-23) ---
+
+def fake_pmset(batt, settings, fail=False):
+    def run(cmd, **kw):
+        if fail:
+            raise OSError("no pmset")
+        return SimpleNamespace(stdout=batt if cmd[-1] == "batt" else settings)
+    return run
+
+
+@pytest.mark.parametrize("batt, settings, expected", [
+    ("Now drawing from 'AC Power'\n -InternalBattery-0", " lowpowermode         0\n", ("AC", False)),
+    ("Now drawing from 'Battery Power'\n", " lowpowermode         1\n", ("Battery", True)),
+    ("Now drawing from 'UPS Power'\n", " lowpowermode         0\n", (None, False)),
+    ("Now drawing from 'AC Power'\n", " sleep 1\n", ("AC", None)),
+    ("", "", (None, None)),
+])
+def test_power_state_parses_pmset(batt, settings, expected):
+    state = lb.power_state(run=fake_pmset(batt, settings))
+    assert (state["source"], state["low_power_mode"]) == expected
+
+
+def test_power_state_is_null_when_pmset_fails():
+    assert lb.power_state(run=fake_pmset("", "", fail=True)) == {"source": None, "low_power_mode": None}
+
+
+def test_power_that_changes_during_the_run_is_unknown():
+    ac, batt = {"source": "AC", "low_power_mode": False}, {"source": "Battery", "low_power_mode": True}
+    assert lb.power_record(ac, ac) == {**ac, "changed": False}
+    assert lb.power_record(ac, batt) == {"source": None, "low_power_mode": None, "changed": True}
+    assert lb.power_line(lb.power_record(ac, batt)).startswith("power unknown")
+    assert lb.power_line(lb.power_record(ac, ac)) == "power AC, Low Power Mode off"
+
+
+def test_run_records_power_and_checker(tmp_path, golden):
+    session = FakeSession()
+    original = session.get
+    session.get = lambda url, timeout=None: _Resp({"ollama_status": "online", "generation_model": "llama3.2:3b",
+                                                   "grounding_checker_effective": "judge:llama3.2:1b"}) \
+        if url.endswith("/health") else original(url, timeout)
+    readings = iter([{"source": "AC", "low_power_mode": False}] * 2)
+    path, _ = bench(tmp_path, golden, session, power_reader=lambda: next(readings)).run()
+    meta = json.loads(path.read_text())["meta"]
+    assert meta["machine"]["power"] == {"source": "AC", "low_power_mode": False, "changed": False}
+    assert meta["grounding_checker_effective"] == "judge:llama3.2:1b"
+    assert "drafts" not in meta

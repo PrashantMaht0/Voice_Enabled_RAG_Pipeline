@@ -1,27 +1,33 @@
-#---- Temporay files --- 
+# --- Local notes and working files (kept on your machine, never committed) ---
+docs/
+notes.md
 temp.md
 errors.md
 sample_support.md
-notes.md
+test-preferences.json
+scripts/
+training/
 
-#----- envirnoment files
+# --- Secrets ---
 .env
 
-#---- cache 
-__pycache__
-vectordb/
-data/raw/
-docs/
-
-#---- evaluation venv
-eval-env/
+# --- Python environments and caches ---
 dev-env/
-data/eval/last_run_scores.csv
+eval-env/
+__pycache__/
+.pytest_cache/
 
-scripts
-models
-#---- macOS
+# --- Models, indexes and the trace database (downloaded or built locally) ---
+models/
+vectordb/
+
+# --- Data: everything stays local except the reviewed evaluation question sets ---
+data/*
+!data/eval/
+data/eval/*
+!data/eval/golden_dataset.json
+!data/eval/table_questions.json
+!data/eval/figure_questions.json
+
+# --- macOS ---
 .DS_Store
-
-#---- latency benchmark runs (spec 0003)
-data/benchmarks/

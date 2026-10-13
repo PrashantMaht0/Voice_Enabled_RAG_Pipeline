@@ -1,6 +1,11 @@
+"""Chunking: pages and files split into overlapping token windows; table and figure chunks kept whole."""
+from typing import Dict, List
+
 import tiktoken
-from typing import List, Dict
+
 from src.utils.config import pick
+from src.ingestion.tables import MAX_TABLE_TOKENS
+from src.ingestion.figures import figure_body
 
 class DocumentChunker:
     """Splits documents into overlapping token-aware chunks."""
@@ -28,6 +33,21 @@ class DocumentChunker:
             
         return chunks
 
+    def split_table(self, markdown: str, max_tokens: int = MAX_TABLE_TOKENS) -> List[str]:
+        """Splits a Markdown table by rows, repeating the header; a single oversize row stands alone."""
+        lines = markdown.splitlines()
+        header, rows = lines[:2], lines[2:]
+        size = lambda part: len(self.tokenizer.encode("\n".join(header + part)))
+        parts, current = [], []
+        for row in rows:
+            if current and size(current + [row]) > max_tokens:
+                parts.append(current)
+                current = []
+            current.append(row)
+        if current or not parts:
+            parts.append(current)
+        return ["\n".join(header + part) for part in parts]
+
     def chunk_documents(self, documents: List[Dict]) -> List[Dict]:
         """
         Processes a list of documents and injects citation markers into each chunk.
@@ -54,7 +74,8 @@ class DocumentChunker:
                 metadata = {
                     "source": source,
                     "doc_hash": doc_hash,
-                    "chunk_index": i
+                    "chunk_index": i,
+                    "kind": "text",
                 }
                 if page is not None:
                     metadata["page"] = page
@@ -65,5 +86,40 @@ class DocumentChunker:
                     "content": augmented_chunk_text,
                     "metadata": metadata
                 })
-                
+
+            # Tables come after every text chunk, so text chunk ids match under every parser.
+            i = len(pieces)
+            for page, _top, markdown in doc.get("tables", []):
+                for part in self.split_table(markdown):
+                    all_chunks.append({
+                        "id": f"{doc_hash[:16]}_{i}",
+                        "content": f"[Source: {source} | Page: {page}]\n{part}",
+                        "metadata": {
+                            "source": source,
+                            "doc_hash": doc_hash,
+                            "chunk_index": i,
+                            "page": page,
+                            "kind": "table",
+                            "table_parser": doc.get("table_parser"),
+                        },
+                    })
+                    i += 1
+
+            # Figures come after the tables and are never split, so table chunk ids stay put too.
+            for page, _top, caption, figure in doc.get("figures", []):
+                all_chunks.append({
+                    "id": f"{doc_hash[:16]}_{i}",
+                    "content": f"[Source: {source} | Page: {page}]\n{figure_body(caption, figure)}",
+                    "metadata": {
+                        "source": source,
+                        "doc_hash": doc_hash,
+                        "chunk_index": i,
+                        "page": page,
+                        "kind": "figure",
+                        "figure_parser": doc.get("figure_parser"),
+                        "figure": figure,
+                    },
+                })
+                i += 1
+
         return all_chunks

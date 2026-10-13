@@ -2,6 +2,7 @@
 # After `docker compose up`, pull the language models once:
 #   docker compose exec ollama ollama pull llama3.2:3b
 #   docker compose exec ollama ollama pull llama3.2:1b
+#   docker compose exec ollama ollama pull qwen2.5vl:7b     # reads charts while indexing
 #   Use Ollama on the host instead (GPU speed on a Mac):
 #     VRAG_OLLAMA_HOST=http://host.docker.internal:11434 docker compose up
 #   Start over (deletes documents, index, models and caches):  docker compose down -v
@@ -31,7 +32,8 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # This machine only: the API has no login and serves your stored questions (spec 0006)
+      - "127.0.0.1:8000:8000"
     environment: *app-env
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -56,7 +58,8 @@ services:
     command: python app.py
     restart: unless-stopped
     ports:
-      - "7860:7860"
+      # This machine only: the Observability tab shows your stored questions (spec 0006)
+      - "127.0.0.1:7860:7860"
     environment:
       VRAG_API_BASE: http://api:8000/api
       HF_HOME: /cache/huggingface

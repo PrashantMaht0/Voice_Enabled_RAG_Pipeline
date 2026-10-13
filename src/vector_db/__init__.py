@@ -1,4 +1,1 @@
-from .vector_store import VectorDBManager
-from .hybrid_store import HybridStore
-
-__all__ = ["VectorDBManager", "HybridStore"]
+"""The index: Qdrant for vectors and Tantivy for keywords, plus the hybrid search over both."""

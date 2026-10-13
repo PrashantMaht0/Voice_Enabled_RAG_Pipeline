@@ -106,10 +106,13 @@ REFUSAL_MARKERS = (
     "do not contain sufficient information",
     "not explicitly stated in the provided",
     "cannot provide a direct answer",
+    "please ask a full question",            # an empty query (spec 0006)
 )
 
 
 def is_refusal(text: str) -> bool:
+    """True when the text is a refusal (any REFUSAL_MARKERS phrase), which is never cached as context or scored as an
+    answer."""
     lowered = (text or "").lower()
     return any(marker in lowered for marker in REFUSAL_MARKERS)
 

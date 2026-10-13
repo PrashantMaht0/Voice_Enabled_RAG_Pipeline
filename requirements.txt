@@ -1,7 +1,7 @@
 # --- API & frontend ---
 fastapi==0.141.1
 uvicorn==0.52.3
-python-multipart==0.0.32        
+python-multipart==0.0.32        # FastAPI needs it to accept uploaded files
 gradio==5.50.0
 pydantic==2.12.3
 requests==2.34.2
@@ -17,12 +17,12 @@ tantivy==0.26.0
 sentence-transformers==6.0.0
 FlashRank==0.2.10
 
-# --- Voice: VAD, STT, TTS ---
+# --- Voice: speech to text and text to speech ---
 torch==2.13.0
+torchvision==0.28.0              # pulled in by timm (spec 0004); must match torch, see Dockerfile
 faster-whisper==1.2.1
 kokoro-onnx==0.5.0
-onnxruntime==1.29.0
-soundfile==0.14.0
+onnxruntime==1.29.0              # runs the Kokoro voice model
 librosa==1.0.0
 numpy==2.5.2
 
@@ -30,8 +30,13 @@ numpy==2.5.2
 pypdf==6.16.1
 tiktoken==0.14.0
 
-# --- Guardrails (spacy model installed separately, see header) ---
-spacy==3.8.15
+# --- Tables in PDFs (spec 0004) ---
+# pdfplumber stays at 0.11.9: 0.11.10 needs Pillow 12.2+, and gradio 5.50 needs Pillow below 12.
+pdfplumber==0.11.9
+pypdfium2==5.14.0
+pytesseract==0.3.13
+timm==1.0.30                     # Table Transformer backbone
+transformers==5.15.0             # already pulled in by sentence-transformers; pinned for the detector
 
 # --- Configuration ---
 PyYAML==6.0.3

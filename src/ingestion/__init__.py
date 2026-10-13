@@ -1,4 +1,1 @@
-from .chunking import DocumentChunker
-from .loader import DocumentLoader
-
-__all__ = ["DocumentChunker","DocumentLoader"]
+"""Turning documents into chunks: loading PDFs and text, reading tables and figures, chunking."""

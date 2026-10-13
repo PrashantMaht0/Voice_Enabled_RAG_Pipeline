@@ -1,0 +1,845 @@
+{
+  "documents": [
+    {
+      "file": "p60-273.pdf",
+      "dir": "data/eval/figure_pdfs",
+      "url": "https://www.census.gov/content/dam/Census/library/publications/2021/demo/p60-273.pdf",
+      "sha256": "7c856144b5d9cb0ebfd108b8370c2871de8d8c7abd4db6596c59501ea1e01ab4",
+      "license": "US government work (US Census Bureau, Income and Poverty in the United States: 2020), public domain under 17 U.S.C. 105. Checked 2026-10-09."
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "dir": "data/eval/figure_pdfs",
+      "url": "https://unstats.un.org/sdgs/report/2024/The-Sustainable-Development-Goals-Report-2024.pdf",
+      "sha256": "f416db91d1d2e3c5d77e5bceae47b602f8c9b9223df28c95767107824f249813",
+      "license": "Copyright 2024 United Nations, all rights reserved (page 49: requests to reproduce excerpts go to the Copyright Clearance Center). The PDF is not committed or redistributed; this file keeps only its URL, SHA256, figure boxes and short questions with the values they expect. Checked 2026-10-09."
+    },
+    {
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "dir": "data/eval/table_pdfs",
+      "url": "https://github.com/vijaysparmar/Azure/raw/master/Microsoft%20Azure%20Essentials%20Fundamentals%20of%20Azure%202nd%20ed%20pdf.pdf",
+      "sha256": "fcb71e493a8b61def80f4535b54cd028388b9c33ae1f11c8a625eafc2968f1a1",
+      "license": "Same copy as in table_questions.json; at most 4 real charts or diagrams are listed from it."
+    }
+  ],
+  "figure_pages": [
+    {
+      "file": "p60-273.pdf",
+      "page": 11,
+      "bbox": [
+        53.0,
+        41.2,
+        559.5,
+        638.0
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 1."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 13,
+      "bbox": [
+        53.2,
+        331.1,
+        559.2,
+        702.8
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 2."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 16,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        673.4
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 3."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 18,
+      "bbox": [
+        54.0,
+        351.8,
+        560.0,
+        648.5
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 4."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 19,
+      "bbox": [
+        52.5,
+        41.2,
+        559.5,
+        456.4
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 5."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 20,
+      "bbox": [
+        53.5,
+        41.2,
+        559.5,
+        458.0
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 6."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 21,
+      "bbox": [
+        53.5,
+        55.0,
+        559.5,
+        398.1
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 7."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 22,
+      "bbox": [
+        53.5,
+        41.2,
+        559.5,
+        419.2
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 8."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 23,
+      "bbox": [
+        53.0,
+        41.2,
+        560.5,
+        735.0
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 9."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 24,
+      "bbox": [
+        229.3,
+        419.7,
+        561.3,
+        677.0
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 10."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 25,
+      "bbox": [
+        53.5,
+        41.2,
+        561.0,
+        413.6
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 11."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 27,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        583.8
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 12."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 29,
+      "bbox": [
+        54.9,
+        54.9,
+        386.9,
+        322.5
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure 13."
+    },
+    {
+      "file": "p60-273.pdf",
+      "page": 86,
+      "bbox": [
+        52.4,
+        359.9,
+        559.0,
+        735.0
+      ],
+      "bbox_source": "candidates",
+      "caption": "Figure D-1."
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 6,
+      "bbox": [
+        357.3,
+        294.8,
+        606.5,
+        497.2
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 6,
+      "bbox": [
+        346.6,
+        583.5,
+        603.8,
+        767.1
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 7,
+      "bbox": [
+        347.5,
+        453.9,
+        631.1,
+        686.4
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 13,
+      "bbox": [
+        54.8,
+        556.8,
+        461.2,
+        730.0
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 17,
+      "bbox": [
+        351.3,
+        286.9,
+        610.6,
+        460.8
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 18,
+      "bbox": [
+        36.0,
+        429.1,
+        613.0,
+        596.8
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 21,
+      "bbox": [
+        347.0,
+        569.8,
+        613.0,
+        740.7
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 28,
+      "bbox": [
+        442.6,
+        366.5,
+        602.9,
+        670.0
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 34,
+      "bbox": [
+        341.6,
+        554.2,
+        615.3,
+        719.4
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    },
+    {
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 40,
+      "bbox": [
+        0.0,
+        485.1,
+        315.2,
+        712.5
+      ],
+      "bbox_source": "candidates",
+      "caption": null
+    }
+  ],
+  "questions": [
+    {
+      "id": "f001",
+      "question": "What was the median household income for all households in 2020?",
+      "expected": [
+        "$67,521"
+      ],
+      "file": "p60-273.pdf",
+      "page": 11,
+      "bbox": [
+        53.0,
+        41.2,
+        559.5,
+        638.0
+      ],
+      "crop": "p60-273-p11-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f002",
+      "question": "What was the change in median household income for all households from 2019 to 2020?",
+      "expected": [
+        "-2.9"
+      ],
+      "file": "p60-273.pdf",
+      "page": 11,
+      "bbox": [
+        53.0,
+        41.2,
+        559.5,
+        638.0
+      ],
+      "crop": "p60-273-p11-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f003",
+      "question": "What was the median household income for family households in 2020?",
+      "expected": [
+        "$86,372"
+      ],
+      "file": "p60-273.pdf",
+      "page": 11,
+      "bbox": [
+        53.0,
+        41.2,
+        559.5,
+        638.0
+      ],
+      "crop": "p60-273-p11-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f004",
+      "question": "What was the real median household income for Asian households in 2020?",
+      "expected": [
+        "$94,903"
+      ],
+      "file": "p60-273.pdf",
+      "page": 13,
+      "bbox": [
+        53.2,
+        331.1,
+        559.2,
+        702.8
+      ],
+      "crop": "p60-273-p13-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f006",
+      "question": "In the Census report, what was the percent change in the Gini index of money income inequality from 2019 to 2020?",
+      "expected": [
+        "0.9"
+      ],
+      "file": "p60-273.pdf",
+      "page": 16,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        673.4
+      ],
+      "crop": "p60-273-p16-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f007",
+      "question": "In the Census report, what was the mean logarithmic deviation of money income in 2020?",
+      "expected": [
+        "0.618"
+      ],
+      "file": "p60-273.pdf",
+      "page": 16,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        673.4
+      ],
+      "crop": "p60-273-p16-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f008",
+      "question": "In the Census report, what was the Atkinson index with e=0.75 for equivalence-adjusted income in 2020?",
+      "expected": [
+        "0.302"
+      ],
+      "file": "p60-273.pdf",
+      "page": 16,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        673.4
+      ],
+      "crop": "p60-273-p16-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f009",
+      "question": "What was the median earnings for full-time, year-round workers in 2020?",
+      "expected": [
+        "$56,287"
+      ],
+      "file": "p60-273.pdf",
+      "page": 18,
+      "bbox": [
+        54.0,
+        351.8,
+        560.0,
+        648.5
+      ],
+      "crop": "p60-273-p18-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f010",
+      "question": "What is the female-to-male earnings ratio in 2020?",
+      "expected": [
+        "83.0 percent"
+      ],
+      "file": "p60-273.pdf",
+      "page": 19,
+      "bbox": [
+        52.5,
+        41.2,
+        559.5,
+        456.4
+      ],
+      "crop": "p60-273-p19-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f011",
+      "question": "What is the median earnings of men in 2020?",
+      "expected": [
+        "$61,417"
+      ],
+      "file": "p60-273.pdf",
+      "page": 19,
+      "bbox": [
+        52.5,
+        41.2,
+        559.5,
+        456.4
+      ],
+      "crop": "p60-273-p19-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f012",
+      "question": "What is the median earnings of women in 2020?",
+      "expected": [
+        "$50,982"
+      ],
+      "file": "p60-273.pdf",
+      "page": 19,
+      "bbox": [
+        52.5,
+        41.2,
+        559.5,
+        456.4
+      ],
+      "crop": "p60-273-p19-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f013",
+      "question": "What is the number of male full-time, year-round workers in 2020?",
+      "expected": [
+        "59.6 million"
+      ],
+      "file": "p60-273.pdf",
+      "page": 20,
+      "bbox": [
+        53.5,
+        41.2,
+        559.5,
+        458.0
+      ],
+      "crop": "p60-273-p20-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f014",
+      "question": "What is the number of female full-time, year-round workers in 2020?",
+      "expected": [
+        "45.9 million"
+      ],
+      "file": "p60-273.pdf",
+      "page": 20,
+      "bbox": [
+        53.5,
+        41.2,
+        559.5,
+        458.0
+      ],
+      "crop": "p60-273-p20-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f015",
+      "question": "What is the number of male workers in 2020?",
+      "expected": [
+        "87.6 million"
+      ],
+      "file": "p60-273.pdf",
+      "page": 20,
+      "bbox": [
+        53.5,
+        41.2,
+        559.5,
+        458.0
+      ],
+      "crop": "p60-273-p20-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f016",
+      "question": "What is the percent change in median earnings for full-time, year-round workers from 2007 to 2009?",
+      "expected": [
+        "-0.6"
+      ],
+      "file": "p60-273.pdf",
+      "page": 21,
+      "bbox": [
+        53.5,
+        55.0,
+        559.5,
+        398.1
+      ],
+      "crop": "p60-273-p21-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f017",
+      "question": "What is the percent change in median earnings for all workers from 2019 to 2020?",
+      "expected": [
+        "-1.2"
+      ],
+      "file": "p60-273.pdf",
+      "page": 21,
+      "bbox": [
+        53.5,
+        55.0,
+        559.5,
+        398.1
+      ],
+      "crop": "p60-273-p21-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f018",
+      "question": "What is the percent change in the number of full-time, year-round workers from 2007 to 2009?",
+      "expected": [
+        "-8.6"
+      ],
+      "file": "p60-273.pdf",
+      "page": 21,
+      "bbox": [
+        53.5,
+        55.0,
+        559.5,
+        398.1
+      ],
+      "crop": "p60-273-p21-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f019",
+      "question": "What was the number of people in poverty in 2020?",
+      "expected": [
+        "37.2 million"
+      ],
+      "file": "p60-273.pdf",
+      "page": 22,
+      "bbox": [
+        53.5,
+        41.2,
+        559.5,
+        419.2
+      ],
+      "crop": "p60-273-p22-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f020",
+      "question": "What was the poverty rate for people aged 65 and older in 2020?",
+      "expected": [
+        "9.0"
+      ],
+      "file": "p60-273.pdf",
+      "page": 23,
+      "bbox": [
+        53.0,
+        41.2,
+        560.5,
+        735.0
+      ],
+      "crop": "p60-273-p23-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f021",
+      "question": "What was the percentage-point change in the poverty rate for people with a disability from 2019 to 2020?",
+      "expected": [
+        "2.5"
+      ],
+      "file": "p60-273.pdf",
+      "page": 23,
+      "bbox": [
+        53.0,
+        41.2,
+        560.5,
+        735.0
+      ],
+      "crop": "p60-273-p23-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f022",
+      "question": "What was the poverty rate for people with a bachelor's degree or higher in 2020?",
+      "expected": [
+        "4.0"
+      ],
+      "file": "p60-273.pdf",
+      "page": 23,
+      "bbox": [
+        53.0,
+        41.2,
+        560.5,
+        735.0
+      ],
+      "crop": "p60-273-p23-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f024",
+      "question": "What is the poverty rate for people aged 18 to 64 in 2020?",
+      "expected": [
+        "10.4 percent"
+      ],
+      "file": "p60-273.pdf",
+      "page": 25,
+      "bbox": [
+        53.5,
+        41.2,
+        561.0,
+        413.6
+      ],
+      "crop": "p60-273-p25-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f025",
+      "question": "What is the poverty rate for people under age 18 in 2020?",
+      "expected": [
+        "16.1 percent"
+      ],
+      "file": "p60-273.pdf",
+      "page": 25,
+      "bbox": [
+        53.5,
+        41.2,
+        561.0,
+        413.6
+      ],
+      "crop": "p60-273-p25-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f026",
+      "question": "What is the poverty rate for female householders, no spouse in 2020?",
+      "expected": [
+        "23.4"
+      ],
+      "file": "p60-273.pdf",
+      "page": 27,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        583.8
+      ],
+      "crop": "p60-273-p27-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f027",
+      "question": "In the Census report, what was the percentage-point change from 2019 to 2020 in the poverty rate of related children under age 6 in families with a male householder, no spouse?",
+      "expected": [
+        "-0.5"
+      ],
+      "file": "p60-273.pdf",
+      "page": 27,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        583.8
+      ],
+      "crop": "p60-273-p27-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f028",
+      "question": "In the Census report, what was the 2020 poverty rate for related children under age 18 in families with a female householder, no spouse?",
+      "expected": [
+        "38.1"
+      ],
+      "file": "p60-273.pdf",
+      "page": 27,
+      "bbox": [
+        55.0,
+        55.0,
+        561.0,
+        583.8
+      ],
+      "crop": "p60-273-p27-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f033",
+      "question": "What is the upper secondary school completion rate in Europe and Northern America in 2023?",
+      "expected": [
+        "89"
+      ],
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 18,
+      "bbox": [
+        36.0,
+        429.1,
+        613.0,
+        596.8
+      ],
+      "crop": "The-Sustainable-Development-Goals-Report-2024-p18-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f034",
+      "question": "What is the upper secondary school completion rate in Central and Southern Asia in 2015?",
+      "expected": [
+        "45"
+      ],
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 18,
+      "bbox": [
+        36.0,
+        429.1,
+        613.0,
+        596.8
+      ],
+      "crop": "The-Sustainable-Development-Goals-Report-2024-p18-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f035",
+      "question": "According to the UN SDG Report 2024, what percentage of women worldwide make their own decisions on sexual and reproductive health and rights (2007 to 2022 data)?",
+      "expected": [
+        "58"
+      ],
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 21,
+      "bbox": [
+        347.0,
+        569.8,
+        613.0,
+        740.7
+      ],
+      "crop": "The-Sustainable-Development-Goals-Report-2024-p21-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f036",
+      "question": "According to the UN SDG Report 2024, what percentage of women in Europe and Northern America make their own decisions on sexual and reproductive health and rights?",
+      "expected": [
+        "82"
+      ],
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 21,
+      "bbox": [
+        347.0,
+        569.8,
+        613.0,
+        740.7
+      ],
+      "crop": "The-Sustainable-Development-Goals-Report-2024-p21-1.png",
+      "reviewed": true
+    },
+    {
+      "id": "f039",
+      "question": "What percentage of global deforestation is due to urban and infrastructure development?",
+      "expected": [
+        "6.2"
+      ],
+      "file": "The-Sustainable-Development-Goals-Report-2024.pdf",
+      "page": 40,
+      "bbox": [
+        0.0,
+        485.1,
+        315.2,
+        712.5
+      ],
+      "crop": "The-Sustainable-Development-Goals-Report-2024-p40-1.png",
+      "reviewed": true
+    }
+  ],
+  "review_note": "Drafted by qwen2.5vl:7b from each crop on 2026-10-09 (39 kept by the absent outside check, 31 dropped); reviewed against the crops: 24 kept, 7 reworded (value right, question described the wrong row), 8 dropped (axis ticks, stacked totals, cut off region labels, one duplicate)."
+}

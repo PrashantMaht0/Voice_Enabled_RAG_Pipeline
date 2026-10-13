@@ -1,15 +1,25 @@
+"""Loading documents: PDFs page by page (text layer, tables and figures) and text files whole, each with a
+stable content fingerprint."""
 import hashlib
 import os
 import re
 import unicodedata
 from typing import List, Dict, Tuple
 from pypdf import PdfReader
+from src.ingestion.tables import TableExtractor
+from src.ingestion.figures import FigureExtractor
 from src.utils.config import pick
+
+# A page with fewer non whitespace characters than this has no text layer (spec 0004).
+MIN_TEXT_LAYER_CHARS = 20
 
 class DocumentLoader:
     """Loads and normalizes PDF, text and markdown files."""
-    def __init__(self, raw_data_dir: str = None):
+    def __init__(self, raw_data_dir: str = None, table_extractor: TableExtractor = None,
+                 figure_extractor: FigureExtractor = None):
         self.raw_data_dir = pick(raw_data_dir, "paths.raw_data_dir", "data/raw")
+        self.table_extractor = table_extractor
+        self.figure_extractor = figure_extractor
 
     def _normalize_text(self, text: str) -> str:
         """Normalizes Unicode and strips control characters and stray whitespace."""
@@ -41,7 +51,7 @@ class DocumentLoader:
                 # One broken page must not cost the rest of the document
                 print(f"Error reading page {number} of {file_path}: {e}")
                 continue
-            if text:
+            if len(re.sub(r"\s", "", text)) >= MIN_TEXT_LAYER_CHARS:
                 pages.append((number, text))
         return pages
 
@@ -53,6 +63,34 @@ class DocumentLoader:
         except Exception as e:
             print(f"Error reading Text file {file_path}: {e}")
             return ""
+
+    def _add_tables(self, document: Dict, file_path: str, pages: List[Tuple[int, str]]):
+        """Reads the PDF's tables when a table reader is on; with `none` this does nothing.
+
+        Returns the table boxes per page when detection ran, so the figure pass can reuse them."""
+        extractor = self.table_extractor or TableExtractor()
+        if not extractor.enabled:
+            return None
+        try:
+            document["tables"] = extractor.extract(file_path, {number for number, _ in pages})
+            document["table_parser"] = extractor.parser
+            return getattr(extractor, "page_boxes", None)
+        except Exception as e:
+            # Tables are extra: a broken table pass must never cost the document's text
+            print(f"[Tables] Table extraction failed for {file_path}: {e}")
+            return None
+
+    def _add_figures(self, document: Dict, file_path: str, table_boxes):
+        """Reads the PDF's charts and diagrams when a figure reader is on; with `none` this does nothing."""
+        extractor = self.figure_extractor or FigureExtractor()
+        if not extractor.enabled:
+            return
+        try:
+            document["figures"] = extractor.extract(file_path, table_boxes)
+            document["figure_parser"] = extractor.parser
+        except Exception as e:
+            # Figures are extra too: a broken figure pass keeps the text and the tables
+            print(f"[Figures] Figure extraction failed for {file_path}: {e}")
 
     def load_documents(self) -> List[Dict[str, str]]:
         """Parses every supported file in the raw directory."""
@@ -84,6 +122,8 @@ class DocumentLoader:
                 if pages is not None:
                     # Chunked page by page so every PDF chunk keeps one page number
                     document["pages"] = pages
+                    table_boxes = self._add_tables(document, file_path, pages)
+                    self._add_figures(document, file_path, table_boxes)
                 documents.append(document)
                 
         return documents

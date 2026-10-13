@@ -39,14 +39,6 @@ class _LLM:
         return "A Contributor can manage resources of all types."
 
 
-class _Guard:
-    def strip_ungrounded_citations(self, answer, chunks):
-        return answer, []
-
-    def verify_assertions(self, answer, chunks):
-        return True
-
-
 @pytest.fixture
 def client(monkeypatch):
     app = FastAPI()
@@ -55,7 +47,6 @@ def client(monkeypatch):
     monkeypatch.setattr(routes, "_rewriter", rewriter)
     monkeypatch.setattr(routes, "_retriever", retriever)
     monkeypatch.setattr(routes, "_llm", _LLM())
-    monkeypatch.setattr(routes, "_guard", _Guard())
     return TestClient(app), rewriter, retriever
 
 
