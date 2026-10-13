@@ -154,3 +154,39 @@ def test_the_empty_spoken_answer_player_says_so():
     player = next(c for c in ui.demo.blocks.values() if getattr(c, "elem_id", None) == "voice-reply")
     assert player.streaming is True
     assert '#voice-reply .empty::after { content: "No spoken answer yet."' in ui.custom_css
+
+
+# --- Documents tab: refreshes itself while a document is indexing ---
+
+def corpus(monkeypatch, *rows):
+    monkeypatch.setattr(ui, "fetch_corpus", lambda: [list(r) for r in rows])
+    monkeypatch.setattr(ui, "corpus_filenames", lambda: [r[0] for r in rows])
+
+
+def test_pending_documents_read_as_indexing(monkeypatch):
+    class R:
+        def json(self):
+            return [{"file": "a.pdf", "chunks": 0, "status": "Pending"}, {"file": "b.pdf", "chunks": 9, "status": "Indexed"}]
+    monkeypatch.setattr(ui.requests, "get", lambda *a, **k: R())
+    assert ui.fetch_corpus() == [["a.pdf", 0, ui.INDEXING], ["b.pdf", 9, "Indexed"]]
+
+
+def test_refresh_starts_polling_only_while_something_is_indexing(monkeypatch):
+    corpus(monkeypatch, ("a.pdf", 0, ui.INDEXING))
+    assert ui.refresh_corpus()[2].active is True
+    corpus(monkeypatch, ("a.pdf", 5, "Indexed"))
+    assert ui.refresh_corpus()[2].active is False
+
+
+def test_polling_stops_with_a_message_when_indexing_ends(monkeypatch):
+    corpus(monkeypatch, ("a.pdf", 5, "Indexed"))
+    rows, picker, timer, status = ui.poll_corpus(ui.time.time())
+    assert rows == [["a.pdf", 5, "Indexed"]] and timer.active is False and status == "Indexing finished."
+    assert "value" not in picker, "a tick never clears the document the user picked"
+
+
+def test_polling_keeps_going_while_indexing_and_gives_up_after_the_limit(monkeypatch):
+    corpus(monkeypatch, ("a.pdf", 0, ui.INDEXING))
+    assert ui.poll_corpus(ui.time.time())[2].active is True
+    rows, _, timer, status = ui.poll_corpus(ui.time.time() - ui.POLL_LIMIT_S - 1)
+    assert timer.active is False and "15 minutes" in status

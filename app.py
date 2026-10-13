@@ -258,7 +258,18 @@ def fetch_corpus():
 
     if not rows:
         return [["No documents in data/raw", 0, "Empty"]]
-    return [[r["file"], r["chunks"], r["status"]] for r in rows]
+    # The API says Pending until a document's chunks are in the index; here that reads as work in progress
+    return [[r["file"], r["chunks"], INDEXING if r["status"] == "Pending" else r["status"]] for r in rows]
+
+
+INDEXING = "Indexing…"
+POLL_EVERY_S = 3              # while a document is indexing, the Documents table refreshes itself this often
+POLL_LIMIT_S = 15 * 60        # and gives up after this long (a file that yields no text never leaves Pending)
+
+
+def still_indexing(rows) -> bool:
+    """True while any document in the table is still being indexed."""
+    return any(row[2] == INDEXING for row in rows)
 
 
 def corpus_filenames():
@@ -271,8 +282,22 @@ def corpus_filenames():
 
 
 def refresh_corpus():
-    """Table plus a refreshed delete picker."""
-    return fetch_corpus(), gr.update(choices=corpus_filenames(), value=None)
+    """Table, a refreshed delete picker, and the auto refresh switched on while anything is indexing (its start
+    time goes to state)."""
+    rows = fetch_corpus()
+    return rows, gr.update(choices=corpus_filenames(), value=None), gr.Timer(active=still_indexing(rows)), time.time()
+
+
+def poll_corpus(started):
+    """One auto refresh tick: the table and picker choices (the picked value is kept), stopping with a status line
+    once nothing is indexing or after POLL_LIMIT_S."""
+    rows = fetch_corpus()
+    if not still_indexing(rows):
+        return rows, gr.update(choices=corpus_filenames()), gr.Timer(active=False), "Indexing finished."
+    if time.time() - (started or 0) > POLL_LIMIT_S:
+        return rows, gr.skip(), gr.Timer(active=False), \
+            "Still indexing after 15 minutes. Check the API console, then press Refresh."
+    return rows, gr.skip(), gr.Timer(active=True), gr.skip()
 
 
 def delete_document(filename):
@@ -300,18 +325,24 @@ def upload_document(file_path):
     """Uploads a file through the API (indexing runs in the background); returns the table, the picker and a status
     line."""
     if file_path is None:
-        return fetch_corpus(), gr.update(), "No file selected."
+        return fetch_corpus(), gr.update(), "No file selected.", gr.Timer(active=False), 0
+    name = os.path.basename(file_path)
     try:
         with open(file_path, "rb") as f:
-            files = {"file": (os.path.basename(file_path), f)}
-            requests.post(f"{API_BASE}/upload", files=files, timeout=60)
+            response = requests.post(f"{API_BASE}/upload", files={"file": (name, f)}, timeout=60)
+        if response.status_code != 200:
+            detail = response.json().get("detail", response.text)
+            return fetch_corpus(), gr.update(), f"Upload failed: {detail}", gr.Timer(active=False), 0
     except Exception as e:
-        return fetch_corpus(), gr.update(), f"Upload failed: {e}"
+        return fetch_corpus(), gr.update(), f"Upload failed: {e}", gr.Timer(active=False), 0
 
     return (
         fetch_corpus(),
         gr.update(choices=corpus_filenames()),
-        f"Indexing {os.path.basename(file_path)}… hit Refresh in a moment to see it indexed.",
+        f"Indexing {name}… the table updates by itself when it is done (large PDFs with tables and charts can "
+        "take a few minutes).",
+        gr.Timer(active=True),
+        time.time(),
     )
 
 
@@ -531,7 +562,7 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
                         )
 
         # ------------------------------------------------------------- Corpus
-        with gr.Tab("Documents"):
+        with gr.Tab("Documents") as docs_tab:
             with gr.Row():
                 with gr.Column(scale=2):
                     file_input = gr.File(label="Add a PDF, TXT or MD file")
@@ -550,6 +581,8 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
                         "from what remains. This cannot be undone._"
                     )
                 with gr.Column(scale=3):
+                    corpus_timer = gr.Timer(POLL_EVERY_S, active=False)
+                    poll_started = gr.State(0)
                     corpus_table = gr.Dataframe(
                         elem_classes=["table-scroll"],
                         headers=["File", "Chunks", "Status"],
@@ -587,8 +620,11 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
                        outputs=ask_outputs + [voice_reply, m_audio])
 
     file_input.upload(fn=upload_document, inputs=[file_input],
-                      outputs=[corpus_table, delete_picker, upload_status])
-    refresh_btn.click(fn=refresh_corpus, outputs=[corpus_table, delete_picker])
+                      outputs=[corpus_table, delete_picker, upload_status, corpus_timer, poll_started])
+    refresh_btn.click(fn=refresh_corpus, outputs=[corpus_table, delete_picker, corpus_timer, poll_started])
+    docs_tab.select(fn=refresh_corpus, outputs=[corpus_table, delete_picker, corpus_timer, poll_started])
+    corpus_timer.tick(fn=poll_corpus, inputs=[poll_started],
+                      outputs=[corpus_table, delete_picker, corpus_timer, upload_status])
     delete_btn.click(fn=delete_document, inputs=[delete_picker],
                      outputs=[corpus_table, delete_picker, upload_status])
 
@@ -601,7 +637,7 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
     obs_recent.select(fn=open_trace, inputs=[obs_ids], outputs=[obs_trace])
 
     demo.load(fn=fetch_status, outputs=[status_md])
-    demo.load(fn=refresh_corpus, outputs=[corpus_table, delete_picker])
+    demo.load(fn=refresh_corpus, outputs=[corpus_table, delete_picker, corpus_timer, poll_started])
 
 if __name__ == "__main__":
     host = os.environ.get("VRAG_UI_HOST", "0.0.0.0")
