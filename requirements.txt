@@ -5,6 +5,7 @@ python-multipart==0.0.32        # FastAPI needs it to accept uploaded files
 gradio==5.50.0
 pydantic==2.12.3
 requests==2.34.2
+urllib3==2.8.0                    # pinned above requests' floor: 2.7.0 had three advisories (spec 0008 audit)
 
 # --- LLM client ---
 ollama==0.6.2
@@ -27,7 +28,7 @@ librosa==1.0.0
 numpy==2.5.2
 
 # --- Document ingestion & chunking ---
-pypdf==6.16.1
+pypdf==6.19.0
 tiktoken==0.14.0
 
 # --- Tables in PDFs (spec 0004) ---

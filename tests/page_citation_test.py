@@ -1,11 +1,13 @@
 """Page level citations (spec 0001): PDFs cite a page, text files keep their chunk."""
+import threading
+
 import pytest
 
 from src.api import routes
 from src.ingestion.chunking import DocumentChunker
 from src.ingestion.loader import DocumentLoader
 from src.verification.citations import strip_ungrounded_citations
-from src.vector_db.vector_store import INDEX_FORMAT_VERSION, VectorDBManager
+from src.vector_db.vector_store import Generation, INDEX_FORMAT_VERSION, VectorDBManager
 
 
 def write_pdf(path, page_texts):
@@ -122,25 +124,32 @@ def test_grounding_check_drops_pages_that_were_not_retrieved():
 # --- index format marker and rebuild ---
 
 class _FakeManager:
-    """Records ingest calls; borrows the real marker logic."""
+    """Records builds; borrows the real marker and commit logic (spec 0008 generations)."""
     marker_path = VectorDBManager.marker_path
+    read_marker = VectorDBManager.read_marker
     index_format = VectorDBManager.index_format
     index_tables = VectorDBManager.index_tables
+    index_corpus = VectorDBManager.index_corpus
     mark_index_format = VectorDBManager.mark_index_format
     clear_index_format = VectorDBManager.clear_index_format
+    commit_generation = VectorDBManager.commit_generation
+    active = VectorDBManager.active
 
     def __init__(self, root, fail=False):
         self.qdrant_path = str(root / "qdrant")
         self.fail = fail
-        self.ingested, self.resets = [], 0
+        self.ingested, self.dropped = [], []
+        self._lock = threading.Lock()
+        self._active = Generation(0, "fake", str(root / "tantivy"), None)
 
-    def ingest_chunks(self, chunks):
+    def build_generation(self, chunks, cancel=None):
         if self.fail:
             raise RuntimeError("disk full")
         self.ingested.append(chunks)
+        return Generation(self._active.number + 1, "fake", "fake", None)
 
-    def reset_indexes(self):
-        self.resets += 1
+    def drop_generation(self, number):
+        self.dropped.append(number)
 
 
 def use_corpus(monkeypatch, folder):
@@ -157,14 +166,16 @@ def test_startup_rebuilds_an_old_index_once(tmp_path, monkeypatch):
     routes.ensure_index_format()
     routes.ensure_index_format()
 
-    assert manager.resets == 1
-    assert manager.index_format() == INDEX_FORMAT_VERSION
+    assert manager.ingested == [[]], "one build, of an empty corpus"
+    assert manager.index_format() == INDEX_FORMAT_VERSION and manager.active.number == 1
 
 
-def test_failed_rebuild_leaves_no_marker(raw_dir, tmp_path, monkeypatch):
+def test_a_failed_build_leaves_the_previous_marker_and_generation(raw_dir, tmp_path, monkeypatch):
+    """Spec 0008, AC-7: the previous generation keeps answering after a failed build."""
     use_corpus(monkeypatch, raw_dir)
     manager = _FakeManager(tmp_path, fail=True)
-    manager.mark_index_format()                  # a healthy index from before
+    manager.mark_index_format("none")            # a healthy index from before
 
     assert routes.rebuild_index(manager) is False
-    assert manager.index_format() == 1, "The next startup must try again"
+    assert manager.index_format() == INDEX_FORMAT_VERSION and manager.active.number == 0
+    assert manager.read_marker()["generation"] == 0

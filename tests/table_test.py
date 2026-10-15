@@ -184,7 +184,7 @@ def test_changing_the_table_settings_rebuilds_once(tmp_path, monkeypatch):
     routes.ensure_index_format()
     routes.ensure_index_format()
 
-    assert manager.resets == 1
+    assert len(manager.ingested) == 1
     assert manager.index_tables() == "pdfplumber|fake|0|0.99"
 
 
@@ -442,16 +442,16 @@ def test_matching_settings_do_not_rebuild(tmp_path, monkeypatch):
     monkeypatch.setattr(tables, "table_fingerprint", lambda parser=None: "none")
     manager.mark_index_format("none")
     routes.ensure_index_format()
-    assert manager.resets == 0
+    assert manager.ingested == []
 
 
 def test_health_reports_the_effective_table_parser(monkeypatch):
     import asyncio
     import ollama
-    monkeypatch.setattr(ollama, "list", lambda: type("L", (), {"models": []})())
+    monkeypatch.setattr(routes, "ollama_status", lambda: "online")
     monkeypatch.setattr(routes, "get_llm", lambda: type("LLM", (), {"generation_model": "llama3.2:3b"})())
     monkeypatch.setattr(tables, "_effective_parser", "pdfplumber")
-    body = asyncio.run(routes.health_check())
+    body = routes.health_check()
     assert body["table_parser_effective"] == "pdfplumber"
 
 

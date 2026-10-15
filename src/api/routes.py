@@ -5,15 +5,19 @@ cache, retrieval and the confidence gate, streamed generation with a sentence by
 and one trace row in the trace store."""
 import json
 import os
+import threading
 import time
+import unicodedata
+import uuid
 from typing import Dict, List, Literal, Optional
 
 import ollama
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from qdrant_client import models
 
+from src.api import guards
 from src.ingestion import figures, tables
 from src.ingestion.chunking import DocumentChunker
 from src.ingestion.loader import DocumentLoader
@@ -25,6 +29,7 @@ from src.utils.config import get
 from src.utils.metrics import PipelineTracer
 from src.utils.query_cache import QueryCache
 from src.utils.text_sanitizer import CITATION_TAG, SOURCE_HEADER, is_refusal, parse_tag, usable_history
+from src.vector_db.index_worker import IndexWorker
 from src.vector_db.vector_store import INDEX_FORMAT_VERSION
 from src.verification import grounding
 from src.verification.citations import strip_ungrounded_citations
@@ -33,6 +38,7 @@ router = APIRouter()
 
 RAW_DIR = get("paths.raw_data_dir", "data/raw")
 DOCUMENT_TYPES = (".pdf", ".md", ".txt")
+INCOMING = ".incoming"                 # uploads are checked here before they join the corpus (spec 0008)
 
 # Heavy models are loaded once per process, not per request.
 _retriever = None
@@ -40,6 +46,9 @@ _llm = None
 _rewriter = None
 _cache = None
 _traces = None
+_worker = None
+_build_lock = threading.Lock()
+_retire_timers = []
 
 
 def get_retriever() -> HybridRetriever:
@@ -99,10 +108,32 @@ def warmup():
 
 
 class QueryRequest(BaseModel):
-    """A question, with the conversation so far (used only to rewrite follow ups into standalone questions)."""
+    """A question, with the conversation so far (used only to rewrite follow ups into standalone questions).
+    Sizes are limited (spec 0008, AC-4) so one request cannot send a huge prompt to the models."""
     query: str
     history: List[Dict[str, str]] = []
-    channel: str = "typed"           # typed | voice, recorded in the trace (spec 0006)
+    channel: Literal["typed", "voice"] = "typed"     # recorded in the trace (spec 0006)
+
+    @field_validator("query")
+    @classmethod
+    def query_fits(cls, value: str) -> str:
+        limit = int(get("api.max_query_chars", 1000))
+        if len(value) > limit:
+            raise ValueError(f"the question is longer than {limit} characters")
+        return value
+
+    @field_validator("history")
+    @classmethod
+    def history_fits(cls, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        turns, chars = int(get("api.max_history_turns", 6)), int(get("api.max_turn_chars", 2000))
+        if len(value) > turns:
+            raise ValueError(f"history has more than {turns} turns")
+        for turn in value:
+            if turn.get("role") not in ("user", "assistant"):
+                raise ValueError("each history turn needs role 'user' or 'assistant'")
+            if len(turn.get("content", "")) > chars:
+                raise ValueError(f"a history turn is longer than {chars} characters")
+        return value
 
 
 def build_citations(chunks: List[str]) -> List[Dict]:
@@ -180,28 +211,80 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
     return search_query
 
 
-def rebuild_index(db_manager=None) -> bool:
-    """Rebuilds both indexes from every document in data/raw. True only on full success."""
-    # Reuses the process-wide manager: embedded Qdrant is single-handle.
-    db_manager = db_manager or get_retriever().store.db_manager
-    db_manager.clear_index_format()
-    print("[Ingestion] Starting vectorization...")
-    try:
+def corpus_files(raw_dir: str = None) -> list:
+    """The corpus fingerprint: sorted `name:size:mtime_ns` of every document file (not the incoming folder)."""
+    raw_dir = raw_dir or RAW_DIR
+    if not os.path.isdir(raw_dir):
+        return []
+    entries = []
+    for name in sorted(os.listdir(raw_dir)):
+        path = os.path.join(raw_dir, name)
+        if os.path.isfile(path) and name.lower().endswith(DOCUMENT_TYPES):
+            stat = os.stat(path)
+            entries.append(f"{name}:{stat.st_size}:{stat.st_mtime_ns}")
+    return entries
+
+
+def build_generation(db_manager=None, cancel: threading.Event = None):
+    """Builds a new index generation from data/raw and swaps it in (spec 0008). The only way the API builds:
+    one at a time under a lock. Raises on failure, leaving the previous generation and its marker serving."""
+    with _build_lock:
+        # Embedded Qdrant is single-handle, so this reuses the process-wide manager.
+        db_manager = db_manager or get_retriever().store.db_manager
+        corpus = corpus_files()                          # taken before reading, so a later upload is not missed
+        print("[Ingestion] Starting vectorization...")
         documents = DocumentLoader().load_documents()
         chunks = DocumentChunker().chunk_documents(documents)
-        if chunks:
-            db_manager.ingest_chunks(chunks)
-        else:
-            # Clear both stores, or BM25 keeps serving deleted documents.
-            db_manager.reset_indexes()
-        get_cache().invalidate("corpus reindexed" if chunks else "corpus emptied")
-        db_manager.mark_index_format(index_fingerprint())
-        print(f"[Ingestion] Successfully indexed {len(chunks)} chunks." if chunks
-              else "[Ingestion] Corpus is empty — indexes cleared.")
+        generation = db_manager.build_generation(chunks, cancel=cancel)
+        previous = db_manager.commit_generation(generation, index_fingerprint(), corpus)
+        get_cache().invalidate(f"index generation {generation.number}")
+        retire(db_manager, previous.number)
+        print(f"[Ingestion] Generation {generation.number} is live with {len(chunks)} chunks.")
+
+
+def retire(db_manager, number: int):
+    """Deletes a replaced generation after index.retire_after_s, once questions in flight are done with it."""
+    timer = threading.Timer(float(get("index.retire_after_s", 30)), db_manager.drop_generation, [number])
+    timer.daemon = True
+    timer.start()
+    _retire_timers.append(timer)
+
+
+def rebuild_index(db_manager=None) -> bool:
+    """A build at startup (format or reader settings changed): True only on full success."""
+    try:
+        build_generation(db_manager)
         return True
     except Exception as e:
-        print(f"[Ingestion] Pipeline failed: {e}")
+        print(f"[Ingestion] Pipeline failed; the previous index is still serving: {e}")
         return False
+
+
+def get_index_worker() -> IndexWorker:
+    """The single index worker, started on first use (so apps built without the lifespan get one too)."""
+    global _worker
+    if _worker is None:
+        _worker = IndexWorker(lambda cancel: build_generation(cancel=cancel))
+    return _worker.start()
+
+
+def start_index(db_manager=None):
+    """After warmup: remove generations the marker does not name, start the worker, and queue a rebuild when the
+    corpus folder changed while the API was off (an old marker without a corpus counts as matching)."""
+    db_manager = db_manager or get_retriever().store.db_manager
+    db_manager.cleanup_orphans()
+    worker = get_index_worker()
+    indexed = db_manager.index_corpus()
+    if indexed is not None and indexed != corpus_files():
+        worker.request_rebuild("documents changed while the API was off")
+
+
+def stop_index():
+    """On shutdown: stop a build in progress and cancel pending retirements."""
+    if _worker is not None:
+        _worker.stop()
+    for timer in _retire_timers:
+        timer.cancel()
 
 
 def index_fingerprint() -> str:
@@ -225,26 +308,31 @@ def ensure_index_format():
               "leaving it as is.")
 
 
-@router.get("/health")
-async def health_check():
-    """Whether Ollama answers, which models it has, and which table reader, figure reader and grounding
-    checker are actually in effect (a configured one that failed to load reports `none`)."""
-    try:
-        models_response = ollama.list()
-        available_models = [m.model for m in models_response.models] if hasattr(models_response, "models") else []
-        ollama_status = "online"
-        ollama_error = None
-    except Exception as e:
-        available_models = []
-        ollama_status = "offline"
-        # Keep the detail out of the status field so callers can render a short label
-        ollama_error = str(e)
+_ollama_check = {"at": None, "status": None}
 
+
+def ollama_status() -> str:
+    """`online` or `offline`, asked with a short timeout and reused for health.cache_s seconds (spec 0008)."""
+    now = time.monotonic()
+    if _ollama_check["at"] is not None and now - _ollama_check["at"] < float(get("health.cache_s", 10)):
+        return _ollama_check["status"]
+    try:
+        ollama.Client(timeout=float(get("health.ollama_timeout_s", 3))).list()
+        status = "online"
+    except Exception:
+        status = "offline"
+    _ollama_check.update(at=now, status=status)
+    return status
+
+
+@router.get("/health")
+def health_check():
+    """Whether Ollama answers, and which answer model, table reader, figure reader and grounding checker are
+    actually in effect (a configured one that failed to load reports `none`). A plain def: the Ollama check
+    must never block the event loop."""
     return {
         "status": "healthy",
-        "ollama_status": ollama_status,
-        "ollama_error": ollama_error,
-        "available_local_models": available_models,
+        "ollama_status": ollama_status(),
         "generation_model": get_llm().generation_model,
         "table_parser_effective": tables.effective_parser(),
         "figure_parser_effective": figures.effective_parser(),
@@ -267,7 +355,7 @@ async def clear_cache():
 
 
 @router.get("/corpus")
-async def list_corpus():
+def list_corpus():
     """Each document in data/raw with its indexed chunk count (`Pending` until indexing finishes)."""
     if not os.path.exists(RAW_DIR):
         return []
@@ -284,8 +372,9 @@ async def list_corpus():
 
 
 @router.delete("/corpus/{filename:path}")
-async def delete_document(filename: str):
-    """Removes a source file and rebuilds the indexes from what remains."""
+def delete_document(filename: str):
+    """Removes a source file and queues a rebuild; returns at once (the previous index answers until the new
+    one is ready, and the deleted file is no longer cited)."""
     safe_name = os.path.basename(filename)
     file_path = os.path.join(RAW_DIR, safe_name)
 
@@ -297,9 +386,23 @@ async def delete_document(filename: str):
         raise HTTPException(status_code=404, detail=f"{safe_name} is not in the corpus.")
 
     os.remove(file_path)
-    get_cache().invalidate(f"{safe_name} removed")
-    rebuild_index()
-    return {"deleted": safe_name}
+    get_index_worker().request_rebuild(f"{safe_name} deleted")
+    return {"deleted": safe_name, "index": "queued"}
+
+
+@router.get("/index")
+def index_status():
+    """The index worker: idle, building or failed (with a short reason), and the generation answering now."""
+    status = get_index_worker().status()
+    status["generation"] = get_retriever().store.db_manager.active.number
+    return status
+
+
+def current_generation():
+    """The generation answering now, or None for a retriever without generations (tests)."""
+    manager = getattr(getattr(get_retriever(), "store", None), "db_manager", None)
+    active = getattr(manager, "active", None)
+    return getattr(active, "number", None)
 
 
 def retrieve(search_query: str, tracer) -> tuple:
@@ -388,6 +491,8 @@ def answer_events(request: QueryRequest):
             return
 
         cached, cache_level = get_cache().get(search_query)
+        if cached is not None and cached.get("generation") != current_generation():
+            cached, cache_level = None, None             # answered from an index that has since been replaced
         if cached is not None:
             tracer.add_static_span("cache", f"{cache_level.upper()} hit — retrieval and generation skipped")
             log_citations(cached.get("citations", []))
@@ -406,6 +511,7 @@ def answer_events(request: QueryRequest):
                    "total_ms": elapsed()}
             return
 
+        generation = current_generation()
         chunks, confidence, details = retrieve(search_query, tracer)
         confidence = float(confidence)
         record.update(confidence=confidence, retrieved=details)
@@ -469,7 +575,7 @@ def answer_events(request: QueryRequest):
                    "confidence_score": confidence, "search_query": search_query, "citations": citations,
                    "grounded": grounded, "dropped_citations": record.get("dropped_citations", []),
                    "dropped_sentences": dropped, "sentences": sentences, "path": path,
-                   "retrieved": details, "grounding_checker": checker}
+                   "retrieved": details, "grounding_checker": checker, "generation": generation}
         get_cache().put(search_query, payload)
         record.update(path=path, answer=answer, dropped=dropped, grounding_checker=checker,
                       kept=len(sentences) if result else None)
@@ -480,8 +586,10 @@ def answer_events(request: QueryRequest):
         record["path"] = "aborted"
         raise
     except Exception as e:
+        reference = trace_id if trace_id is not None else guards.reference_id()
+        guards.log_error(reference, e)
         record.update(path="error", error=str(e))
-        yield {"type": "error", "detail": str(e)}
+        yield {"type": "error", "detail": guards.error_message(reference)}
     finally:
         tracer.print_trace()
         dropped = record.get("dropped") or []
@@ -498,15 +606,21 @@ def answer_events(request: QueryRequest):
 
 @router.post("/query")
 def manual_query(request: QueryRequest):
-    """The whole answer at once; same pipeline as the stream."""
+    """The whole answer at once; same pipeline as the stream. Takes an answer slot or answers 503."""
+    token = guards.slots.try_acquire()
+    if token is None:
+        return guards.busy_response()
     meta, done = {}, None
-    for event in answer_events(request):
-        if event["type"] == "meta":
-            meta = event
-        elif event["type"] == "done":
-            done = event
-        elif event["type"] == "error":
-            raise HTTPException(status_code=500, detail=event["detail"])
+    try:
+        for event in answer_events(request):
+            if event["type"] == "meta":
+                meta = event
+            elif event["type"] == "done":
+                done = event
+            elif event["type"] == "error":
+                raise HTTPException(status_code=500, detail=event["detail"])
+    finally:
+        token.release()
     return {
         "answer": done["answer"],
         "retrieved_context": meta.get("retrieved_context", []),
@@ -524,11 +638,36 @@ def manual_query(request: QueryRequest):
     }
 
 
+class SlotStreamingResponse(StreamingResponse):
+    """A stream that gives its answer slot back when the response ends, even if its generator never ran."""
+
+    def __init__(self, content, token, **kwargs):
+        super().__init__(content, **kwargs)
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.token.release()
+
+
 @router.post("/query/stream")
 def stream_query(request: QueryRequest):
-    """ndjson events: meta, one sentence per approved sentence, then done (or error)."""
-    return StreamingResponse((json.dumps(event) + "\n" for event in answer_events(request)),
-                             media_type="application/x-ndjson")
+    """ndjson events: meta, one sentence per approved sentence, then done (or error). The answer slot is taken
+    before the stream starts and released exactly once, by whichever ends first (spec 0008, AC-12)."""
+    token = guards.slots.try_acquire()
+    if token is None:
+        return guards.busy_response()
+
+    def events():
+        try:
+            for event in answer_events(request):
+                yield json.dumps(event) + "\n"
+        finally:
+            token.release()
+
+    return SlotStreamingResponse(events(), token, media_type="application/x-ndjson")
 
 
 class VoiceTimings(BaseModel):
@@ -573,14 +712,79 @@ def get_trace(trace_id: int):
     return trace
 
 
+BIDI_CONTROLS = {chr(c) for c in list(range(0x202A, 0x202F)) + list(range(0x2066, 0x206A))}
+CHUNK = 1024 * 1024
+
+
+def upload_name_problem(name: str) -> str:
+    """Why an uploaded file name is refused, or '' when it is fine (spec 0008, AC-5)."""
+    if not name or not name.lower().endswith(DOCUMENT_TYPES):
+        return "Upload a .pdf, .md or .txt file."
+    if name.startswith(".") or name != name.strip():
+        return "File names cannot start with a dot or start or end with a space."
+    if "/" in name or "\\" in name or any(unicodedata.category(c) == "Cc" or c in BIDI_CONTROLS for c in name):
+        return "File names cannot contain slashes or control characters."
+    if len(name.encode("utf-8")) > 255:
+        return "File names can be at most 255 bytes."
+    return ""
+
+
+def check_contents(path: str, name: str):
+    """The file is what its name says: a readable PDF within the page limit, or UTF-8 text."""
+    if name.lower().endswith(".pdf"):
+        with open(path, "rb") as f:
+            if f.read(5) != b"%PDF-":
+                raise HTTPException(status_code=400, detail=f"{name} is not a PDF.")
+        try:
+            from pypdf import PdfReader
+            pages = len(PdfReader(path).pages)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"{name} is not a readable PDF.")
+        if pages > int(get("upload.max_pdf_pages", 300)):
+            raise HTTPException(status_code=413, detail=f"{name} has {pages} pages; the limit is "
+                                                        f"{int(get('upload.max_pdf_pages', 300))}.")
+    else:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                while f.read(CHUNK):
+                    pass
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail=f"{name} is not UTF-8 text.")
+
+
 @router.post("/upload")
-async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """Saves a PDF, Markdown or text file into data/raw and rebuilds the index in the background."""
-    safe_name = os.path.basename(file.filename or "")
-    if not safe_name or not safe_name.lower().endswith(DOCUMENT_TYPES):
-        raise HTTPException(status_code=400, detail="Upload a .pdf, .md or .txt file.")
-    os.makedirs(RAW_DIR, exist_ok=True)
-    with open(os.path.join(RAW_DIR, safe_name), "wb") as buffer:
-        buffer.write(await file.read())
-    background_tasks.add_task(rebuild_index)      # the response does not wait for indexing
-    return {"filename": safe_name, "status": "Successfully saved. Queued for vector ingestion."}
+def upload_document(file: UploadFile = File(...)):
+    """Checks an uploaded PDF, Markdown or text file, adds it to data/raw in one step, and queues a rebuild.
+    A plain def: copying and reading the PDF must not block the event loop."""
+    name = os.path.basename(file.filename or "")
+    problem = upload_name_problem(name)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    os.makedirs(os.path.join(RAW_DIR, INCOMING), exist_ok=True)
+    if name.lower() in {existing.lower() for existing in os.listdir(RAW_DIR)}:
+        raise HTTPException(status_code=409, detail=f"A document named {name} is already in the corpus.")
+
+    limit = int(float(get("upload.max_mb", 25)) * 1024 * 1024)
+    part = os.path.join(RAW_DIR, INCOMING, f"{uuid.uuid4().hex}.part")
+    try:
+        written = 0
+        with open(part, "wb") as out:
+            while True:
+                block = file.file.read(CHUNK)
+                if not block:
+                    break
+                written += len(block)
+                if written > limit:
+                    raise HTTPException(status_code=413, detail=f"{name} is larger than "
+                                                                f"{get('upload.max_mb', 25)} MB.")
+                out.write(block)
+        check_contents(part, name)
+        try:
+            os.link(part, os.path.join(RAW_DIR, name))    # fails if the name appeared meanwhile
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail=f"A document named {name} is already in the corpus.")
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+    get_index_worker().request_rebuild(f"{name} uploaded")
+    return {"filename": name, "status": "queued"}

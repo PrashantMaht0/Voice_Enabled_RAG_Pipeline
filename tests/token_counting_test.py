@@ -308,3 +308,39 @@ def test_two_interleaved_requests_never_see_each_others_counts(monkeypatch):
     store = routes.get_traces()
     assert (store.get(first_id)["prompt_tokens"], store.get(first_id)["output_tokens"]) == (1000, 10)
     assert (store.get(second_id)["prompt_tokens"], store.get(second_id)["output_tokens"]) == (2000, 20)
+
+
+# --- a model call that fails or times out (spec 0008, covers: AC-11, AC-14) ---
+
+def timing_out(**kw):
+    """An Ollama stream that sends one token, then times out."""
+    import httpx
+
+    def chunks():
+        yield {"message": {"content": "The "}, "done": False}
+        raise httpx.ReadTimeout("timed out")
+    return chunks()
+
+
+def test_a_timed_out_answer_stream_raises_instead_of_becoming_answer_text(llm):
+    import httpx
+    llm.client = SimpleNamespace(chat=timing_out)
+    with pytest.raises(httpx.ReadTimeout):
+        "".join(llm.stream_generate("q", [CHUNK]))
+
+
+def test_a_generation_timeout_ends_the_question_with_a_reference_and_is_never_an_answer(llm, monkeypatch):
+    llm.client = SimpleNamespace(chat=timing_out)
+    puts = []
+    monkeypatch.setattr(routes, "get_llm", lambda: llm)
+    monkeypatch.setattr(routes, "retrieve", lambda q, tracer: ([CHUNK], 0.9, DETAILS))
+    monkeypatch.setattr(routes, "get_retriever", lambda: SimpleNamespace(confidence_threshold=0.65))
+    monkeypatch.setattr(routes.get_cache(), "put", lambda q, payload: puts.append(payload))
+    events = list(routes.answer_events(routes.QueryRequest(query="What does the warranty cover?")))
+    trace_id = events[0]["trace_id"]
+    assert [e["type"] for e in events] == ["meta", "error"]
+    assert events[-1]["detail"] == f"Something went wrong (reference {trace_id})."
+    assert "timed out" not in events[-1]["detail"], "the client never sees the exception text"
+    trace = routes.get_traces().get(trace_id)
+    assert trace["path"] == "error" and "timed out" in trace["error"]
+    assert puts == [], "an error is never cached as an answer"

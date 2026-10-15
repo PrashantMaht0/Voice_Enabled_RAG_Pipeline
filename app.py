@@ -22,6 +22,47 @@ from src.voice.stt import WhisperSTT
 from src.voice.tts import KokoroTTS
 
 API_BASE = os.environ.get("VRAG_API_BASE", "http://localhost:8000/api")
+MAX_QUESTION_CHARS = 1000      # the API refuses longer questions (spec 0008, AC-4)
+MAX_TURN_CHARS = 2000          # and longer history turns
+TRUST_FORWARDED = os.environ.get("VRAG_UI_TRUST_FORWARDED", "").lower() in ("1", "true", "yes")
+
+
+class ApiError(Exception):
+    """An API reply that is not a success, already turned into a message for the user."""
+
+
+def client_headers(request) -> dict:
+    """X-VRAG-Client: the browser's address, so the API's rate limits count each user (spec 0008, AC-15). Behind a
+    trusted proxy (VRAG_UI_TRUST_FORWARDED) it is the first X-Forwarded-For hop."""
+    if request is None:
+        return {}
+    address = None
+    if TRUST_FORWARDED:
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        address = forwarded or None
+    if address is None and request.client is not None:
+        address = request.client.host
+    return {"X-VRAG-Client": address} if address else {}
+
+
+def api_message(response, name=None) -> str:
+    """A plain message for an API reply that is not a success."""
+    code = response.status_code
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        detail = None
+    if isinstance(detail, list):                       # FastAPI validation errors
+        detail = "; ".join(str(d.get("msg", d)).removeprefix("Value error, ") for d in detail)
+    if code == 409 and name:
+        return f"A document named {name} is already in the corpus. Delete it first to replace it."
+    if code == 413:
+        return f"{name} is too large (limit 25 MB or 300 pages)." if name else "The request is too large."
+    if code == 429:
+        return f"Too many requests, please wait {response.headers.get('Retry-After', 'a few')} seconds."
+    if code == 503:
+        return "The system is busy, please try again in a few seconds."
+    return detail or f"API error {code}."
 
 custom_css = """
 /* The spoken answer player says so while it is empty (spec 0006, polish child) */
@@ -97,7 +138,7 @@ def report_voice_timings(trace_id, **timings):
         pass
 
 
-def voice_query(audio, history):
+def voice_query(audio, history, request: gr.Request = None):
     """Transcribes a recording, streams the answer into the chat, and speaks each approved sentence as soon
     as it arrives (spec 0006). Yields the Ask tab's outputs plus one audio chunk per spoken sentence."""
     history = history or []
@@ -139,13 +180,16 @@ def voice_query(audio, history):
             yield spoken.wav_bytes()
 
     events = queue.Queue()
+    headers = client_headers(request)                # read here: the request is not valid in another thread
 
     def read_stream():
         try:
-            for event in stream_events(question, history, channel="voice"):
+            for event in stream_events(question, history, channel="voice", headers=headers):
                 events.put(event)
-        except Exception as e:
+        except ApiError as e:
             events.put({"type": "error", "detail": str(e)})
+        except Exception as e:
+            events.put({"type": "error", "detail": f"The API could not be reached ({type(e).__name__})."})
         finally:
             events.put(None)
 
@@ -170,7 +214,7 @@ def voice_query(audio, history):
             elif event["type"] == "done":
                 outputs = answer_outputs(turn, meta, event, event.get("trace", []))
             elif event["type"] == "error":
-                outputs = (history, history, "", f"API error: {event['detail']}", "", *blank_metrics())
+                outputs = error_outputs(history, turn, event["detail"])
             if outputs is not None:
                 yield (*outputs, gr.skip(), audio_card())
         for chunk in audio_chunks():
@@ -294,43 +338,76 @@ def refresh_corpus():
     """Table, a refreshed delete picker, and the auto refresh switched on while anything is indexing (its start
     time goes to state)."""
     rows = fetch_corpus()
-    return rows, gr.update(choices=corpus_filenames(), value=None), gr.Timer(active=still_indexing(rows)), time.time()
+    busy = index_busy(rows, fetch_index_status())
+    return rows, gr.update(choices=corpus_filenames(), value=None), gr.Timer(active=busy), time.time()
+
+
+def fetch_index_status():
+    """The API's index worker status (spec 0008), or None when it cannot be read."""
+    try:
+        status = requests.get(f"{API_BASE}/index", timeout=10).json()
+    except Exception:
+        return None
+    return status if isinstance(status, dict) and "state" in status else None
+
+
+def index_busy(rows, status) -> bool:
+    """Whether to keep polling: the worker is building or has a build queued; without a status, any document
+    still Pending."""
+    if status is None:
+        return still_indexing(rows)
+    return status["state"] == "building" or bool(status.get("pending"))
+
+
+def failure_line(status):
+    """The Documents tab's line after a failed build."""
+    if not status or status.get("state") != "failed":
+        return None
+    when = (status.get("finished_at") or "")[:19].replace("T", " ")
+    return (f"Last indexing failed at {when} UTC: {status.get('last_error') or 'unknown error'}. "
+            "The previous index is still answering.")
 
 
 def poll_corpus(started):
     """One auto refresh tick: the table and picker choices (the picked value is kept), stopping with a status line
     once nothing is indexing or after POLL_LIMIT_S."""
     rows = fetch_corpus()
-    if not still_indexing(rows):
-        return rows, gr.update(choices=corpus_filenames()), gr.Timer(active=False), "Indexing finished."
+    status = fetch_index_status()
+    if not index_busy(rows, status):
+        return rows, gr.update(choices=corpus_filenames()), gr.Timer(active=False), \
+            failure_line(status) or "Indexing finished."
     if time.time() - (started or 0) > POLL_LIMIT_S:
         return rows, gr.skip(), gr.Timer(active=False), \
             "Still indexing after 15 minutes. Check the API console, then press Refresh."
     return rows, gr.skip(), gr.Timer(active=True), gr.skip()
 
 
-def delete_document(filename):
-    """Deletes the chosen document through the API (which rebuilds the index); returns the table, the picker and a
-    status line."""
+def delete_document(filename, request: gr.Request = None):
+    """Deletes the chosen document through the API, which re indexes in the background; returns the table, the
+    picker, a status line and the polling timer with its start time."""
     if not filename:
-        return fetch_corpus(), gr.update(), "Pick a document first."
+        return fetch_corpus(), gr.update(), "Pick a document first.", gr.Timer(active=False), 0
 
     try:
-        response = requests.delete(f"{API_BASE}/corpus/{quote(filename)}", timeout=600)
+        response = requests.delete(f"{API_BASE}/corpus/{quote(filename)}", timeout=30,
+                                   headers=client_headers(request))
         if response.status_code != 200:
-            detail = response.json().get("detail", response.text)
-            return fetch_corpus(), gr.update(choices=corpus_filenames()), f"Delete failed: {detail}"
+            return fetch_corpus(), gr.update(choices=corpus_filenames()), \
+                f"Delete failed: {api_message(response, filename)}", gr.Timer(active=False), 0
     except Exception as e:
-        return fetch_corpus(), gr.update(choices=corpus_filenames()), f"Delete failed: {e}"
+        return fetch_corpus(), gr.update(choices=corpus_filenames()), \
+            f"Delete failed: the API could not be reached ({type(e).__name__}).", gr.Timer(active=False), 0
 
     return (
         fetch_corpus(),
         gr.update(choices=corpus_filenames(), value=None),
-        f"Deleted **{filename}** and rebuilt the indexes.",
+        f"Deleted **{filename}**. Re indexing…",
+        gr.Timer(active=True),
+        time.time(),
     )
 
 
-def upload_document(file_path):
+def upload_document(file_path, request: gr.Request = None):
     """Uploads a file through the API (indexing runs in the background); returns the table, the picker and a status
     line."""
     if file_path is None:
@@ -338,12 +415,14 @@ def upload_document(file_path):
     name = os.path.basename(file_path)
     try:
         with open(file_path, "rb") as f:
-            response = requests.post(f"{API_BASE}/upload", files={"file": (name, f)}, timeout=60)
+            response = requests.post(f"{API_BASE}/upload", files={"file": (name, f)}, timeout=120,
+                                     headers=client_headers(request))
         if response.status_code != 200:
-            detail = response.json().get("detail", response.text)
-            return fetch_corpus(), gr.update(), f"Upload failed: {detail}", gr.Timer(active=False), 0
+            return fetch_corpus(), gr.update(), f"Upload failed: {api_message(response, name)}", \
+                gr.Timer(active=False), 0
     except Exception as e:
-        return fetch_corpus(), gr.update(), f"Upload failed: {e}", gr.Timer(active=False), 0
+        return fetch_corpus(), gr.update(), f"Upload failed: the API could not be reached ({type(e).__name__}).", \
+            gr.Timer(active=False), 0
 
     return (
         fetch_corpus(),
@@ -355,11 +434,14 @@ def upload_document(file_path):
     )
 
 
-def stream_events(question, history, channel="typed"):
-    """Events from /api/query/stream: meta, one per approved sentence, then done (or error)."""
-    with requests.post(f"{API_BASE}/query/stream", stream=True, timeout=300,
-                       json={"query": question, "history": history[-HISTORY_TURNS:], "channel": channel}) as r:
-        r.raise_for_status()
+def stream_events(question, history, channel="typed", headers=None):
+    """Events from /api/query/stream: meta, one per approved sentence, then done (or error). A refused request
+    raises ApiError with the message to show."""
+    turns = [{"role": t["role"], "content": str(t["content"])[:MAX_TURN_CHARS]} for t in history[-HISTORY_TURNS:]]
+    with requests.post(f"{API_BASE}/query/stream", stream=True, timeout=300, headers=headers or {},
+                       json={"query": question, "history": turns, "channel": channel}) as r:
+        if r.status_code != 200:
+            raise ApiError(api_message(r))
         for line in r.iter_lines():
             if line:
                 yield json.loads(line)
@@ -390,7 +472,14 @@ def answer_outputs(history, meta, done, trace, partial=None):
     )
 
 
-def run_query(question, history, channel="typed"):
+def error_outputs(history, turn, message):
+    """The Ask tab's outputs when a question could not be answered: the message shows in the chat, but the
+    conversation sent with the next question stays as it was."""
+    shown = turn + [{"role": "assistant", "content": message}]
+    return history, shown, "", "", "", *blank_metrics()
+
+
+def run_query(question, history, request: gr.Request = None, channel="typed"):
     """Text turn: stream approved sentences into the chat as they arrive (spec 0006)."""
     history = history or []
 
@@ -401,7 +490,7 @@ def run_query(question, history, channel="typed"):
     turn = history + [{"role": "user", "content": question}]
     meta, sentences = None, []
     try:
-        for event in stream_events(question, history, channel):
+        for event in stream_events(question, history, channel, headers=client_headers(request)):
             if event["type"] == "meta":
                 meta = event
                 yield answer_outputs(turn, meta, None, [], "…")
@@ -413,10 +502,12 @@ def run_query(question, history, channel="typed"):
                 yield outputs
                 return
             elif event["type"] == "error":
-                yield history, history, "", f"API error: {event['detail']}", "", *blank_metrics()
+                yield error_outputs(history, turn, event["detail"])
                 return
+    except ApiError as e:
+        yield error_outputs(history, turn, str(e))
     except Exception as e:
-        yield history, history, "", f"API error: {e}", "", *blank_metrics()
+        yield error_outputs(history, turn, f"The API could not be reached ({type(e).__name__}).")
 
 
 def clear_conversation():
@@ -600,6 +691,7 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
                         show_label=False,
                         lines=1,            # one line box: Enter asks (Gradio submits on Enter only then)
                         max_lines=4,        # and it still grows while you type a long question
+                        max_length=MAX_QUESTION_CHARS,
                     )
                     with gr.Row():
                         ask_btn = gr.Button("Ask", variant="primary", scale=3)
@@ -710,7 +802,7 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
     corpus_timer.tick(fn=poll_corpus, inputs=[poll_started],
                       outputs=[corpus_table, delete_picker, corpus_timer, upload_status])
     delete_btn.click(fn=delete_document, inputs=[delete_picker],
-                     outputs=[corpus_table, delete_picker, upload_status])
+                     outputs=[corpus_table, delete_picker, upload_status, corpus_timer, poll_started])
 
     delete_picker.change(fn=picker_changed, inputs=[delete_picker], outputs=[delete_btn])
 
@@ -724,6 +816,10 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
     demo.load(fn=refresh_corpus, outputs=[corpus_table, delete_picker, corpus_timer, poll_started])
 
 if __name__ == "__main__":
-    host = os.environ.get("VRAG_UI_HOST", "0.0.0.0")
+    # This machine only unless VRAG_UI_HOST says otherwise (Docker sets 0.0.0.0 inside its container)
+    host = os.environ.get("VRAG_UI_HOST", "127.0.0.1")
     print("\nOpen http://localhost:7860 — microphone access is blocked on other hostnames.\n")
-    demo.launch(server_name=host, server_port=7860)
+    # Gradio refuses files over the API's upload limit before sending them, and runs at most 4 events of a kind at
+    # once, matching the API's answer slots (spec 0008)
+    demo.queue(default_concurrency_limit=4)
+    demo.launch(server_name=host, server_port=7860, max_file_size="25mb")

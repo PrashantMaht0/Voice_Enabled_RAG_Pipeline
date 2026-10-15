@@ -75,7 +75,9 @@ Voice_Enabled_RAG_Pipeline/
 ├── data/
 │   ├── raw/                         # Your source documents (PDF, TXT, MD)
 │   └── eval/
-│       └── golden_dataset.json      # 67 evaluation questions (47 in-scope + 20 adversarial)
+│       ├── golden_dataset.json      # 67 evaluation questions (47 in-scope + 20 adversarial)
+│       ├── table_questions.json     # 29 reviewed table questions over two public PDFs
+│       └── figure_questions.json    # 31 reviewed chart questions over two public reports
 ├── docs/
 │   └── ragas_gate_run.txt           # Recorded output of a passing quality-gate run
 ├── src/
@@ -83,7 +85,9 @@ Voice_Enabled_RAG_Pipeline/
 │   │   └── routes.py                # All HTTP endpoints: query, upload, corpus, cache, health
 │   ├── ingestion/
 │   │   ├── loader.py                # Unicode normalization (NFC) and document parsing
-│   │   └── chunking.py              # Token-aware chunker with citation markers
+│   │   ├── chunking.py              # Token-aware chunker with citation markers
+│   │   ├── tables.py                # Table detection and the table readers (PDF tables to Markdown)
+│   │   └── figures.py               # Finds charts and diagrams and describes them with a vision model
 │   ├── embeddings/
 │   │   └── embedder.py              # BGE embedding client
 │   ├── vector_db/
@@ -91,7 +95,7 @@ Voice_Enabled_RAG_Pipeline/
 │   │   └── vector_store.py          # Index lifecycle: create, ingest, reset
 │   ├── retrieval/
 │   │   ├── query_rewriter.py        # Resolves pronouns in multi-turn conversation
-│   │   ├── reranker.py              # FlashRank cross-encoder scoring
+│   │   ├── reranker.py              # FlashRank cross-encoder scoring (tables scored without Markdown syntax)
 │   │   └── retriever.py             # Search, reranking and the 0.65 confidence gate
 │   ├── prompts/
 │   │   └── prompt_template.py       # Hard-constrained system prompts
@@ -99,11 +103,21 @@ Voice_Enabled_RAG_Pipeline/
 │   │   └── llm_client.py            # Streaming Ollama client, temperature 0.0
 │   ├── voice/
 │   │   ├── stt.py                   # Faster-Whisper speech transcription
-│   │   └── tts.py                   # Kokoro 82M speech synthesis
+│   │   ├── tts.py                   # Kokoro 82M speech synthesis
+│   │   └── streaming.py             # Speaks approved sentences as they arrive, on one worker thread
 │   ├── eval/
-│   │   └── latency_benchmark.py     # Times every stage over the golden questions
+│   │   ├── latency_benchmark.py     # Times every stage over the golden questions
+│   │   ├── table_benchmark.py       # Compares the table readers on the table questions
+│   │   ├── figure_benchmark.py      # Drafts the figure questions and compares the figure readers
+│   │   ├── system_sweep.py          # Runs every setup end to end and picks the default by measurement
+│   │   ├── context_size.py          # Compares reading 3 or 5 passages under the same gates
+│   │   └── grounding_benchmark.py   # Compares sentence checkers against Ragas and picks one
 │   ├── verification/
-│   │   └── guard_rails.py           # spaCy NER and citation grounding checks
+│   │   ├── guard_rails.py           # Removes citations to passages that were never retrieved
+│   │   └── grounding.py             # Splits answers into sentences and checks each one
+│   ├── observability/
+│   │   ├── store.py                 # Every question's trace in SQLite beside the index
+│   │   └── metrics.py               # Rates and per stage timings for the Observability tab
 │   └── utils/
 │       ├── config.py                # Reads config.yaml
 │       ├── query_cache.py           # Two-level cache with corpus invalidation
@@ -178,11 +192,210 @@ Writing the answer takes most of the time (5.4 s median), then reranking (1.2 s)
 cover 10 questions, so the bracketed figure is the slowest of them; long answers take longest to
 speak. Run on 2026-10-03, on commit `744d199` plus the then uncommitted page citation work. Your numbers depend on your machine.
 
+## How well does it read tables?
+
+Tables in PDFs used to come out as jumbled text, so questions about a table's values failed. Now a
+detector ([Table Transformer](https://huggingface.co/microsoft/table-transformer-detection)) finds the
+pages that hold tables, a reader turns each table into a Markdown table, and every table is indexed
+and cited to its page like any other passage. Pages without tables are never read twice.
+
+Five ways of reading a table were compared on 29 reviewed questions whose answers sit only inside a
+table, from the Azure book and the public
+[Raspberry Pi 4 datasheet](https://datasheets.raspberrypi.com/rpi4/raspberry-pi-4-datasheet.pdf):
+
+| Reader | Right value and right page | Refused | Seconds per table page | Indexing both PDFs |
+| --- | ---: | ---: | ---: | ---: |
+| No table reading | 9 of 29 | 10 | none | 20 s |
+| pdfplumber (rules) | 15 of 29 | 5 | 0.05 | 38 s |
+| Qwen2.5 VL 3B (vision model) | 16 of 29 | 2 | 12.8 | 239 s |
+| Qwen2.5 VL 7B (vision model) | 19 of 29 | 4 | 20.0 | 383 s |
+| **LayoutLMv3, fine tuned** | **22 of 29** | 2 | **0.2** | **46 s** |
+
+The fine tuned LayoutLMv3 is the most accurate and nearly the fastest, so it is the default. It
+labels each word on the page as table header, table cell or other, and rows and columns are rebuilt
+from the word positions. It was fine tuned on Kaggle on 5,000 pages of PubTables-1M and scores 0.986
+macro F1 per word on 500 held out pages; the model, its card and its scores are at
+[Prashant-Mahto/layoutlmv3-pubtables-table-words](https://huggingface.co/Prashant-Mahto/layoutlmv3-pubtables-table-words).
+It inherits LayoutLMv3's **CC BY-NC-SA 4.0** license, so it is for non commercial use only.
+
+The detector found every listed table page (8 of 8) and also flagged 6 table of contents pages.
+Measured on 2026-10-08 on an Apple M5 with 16 GB; the run is saved in `data/benchmarks/`. About 30
+questions is a small set, so treat differences of one or two answers as noise.
+
+To run the comparison yourself (about 30 minutes; the two test PDFs download from the links recorded
+in `data/eval/table_questions.json` into `data/eval/table_pdfs/`):
+
+```bash
+ollama pull qwen2.5vl:3b && ollama pull qwen2.5vl:7b    # only needed for the vision readers
+./dev-env/bin/python -m src.eval.table_benchmark run
+```
+
+## How well does it read charts?
+
+Charts in reports are usually drawn shapes, not pictures, so their numbers were invisible to search.
+Now, while a PDF is indexed, the app finds figure regions from the PDF itself (embedded images, and
+clusters of drawn lines and shapes), asks a local vision model (Qwen2.5 VL through Ollama) what each one
+is, and only for real charts and diagrams asks it for a short, checked JSON description: title, axes,
+up to 4 series of up to 8 values, and a one line summary. That description is indexed as a passage
+marked **"Figure description (generated)"** and cited to its page like any other passage. Photos,
+screenshots and tables are skipped. Every read is cached, and the vision model is unloaded after each
+PDF, so it holds no memory while you ask questions. Pages with no drawings cost about nothing.
+
+**Figure questions.** 31 reviewed questions whose answers are printed only inside a chart, from 24
+charts in the US Census report
+[Income and Poverty in the United States: 2020](https://www.census.gov/content/dam/Census/library/publications/2021/demo/p60-273.pdf)
+and the UN [Sustainable Development Goals Report 2024](https://unstats.un.org/sdgs/report/2024/The-Sustainable-Development-Goals-Report-2024.pdf).
+The 7B model drafted them from each chart's crop; each was then checked against the chart by hand
+(24 kept, 7 reworded, 8 dropped).
+
+**Choosing the setup by measurement.** Every candidate setup ran end to end through the real API on the
+same four PDFs (the Azure book, the Raspberry Pi datasheet and the two reports), on a fresh index with
+no caches, answering the table questions, the figure questions and the 67 question golden set, with
+the latency benchmark and, for the finalists, the Ragas gate:
+
+| Setup | Tables right (of 29) | Figures right (of 31) | Answered (of 47) | Trick questions refused | Faithfulness | First indexing of the 4 PDFs | Seconds per chart | Typed answer p50 (p95) | Spoken answer p50 | Peak model memory while indexing | Models while answering |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| No figure reading | 19 | 4 | 44 | 20 of 20 | 0.882 | 2 min | none | 4.7 s (6.3 s) | 7.3 s | none | Llama 3B + 1B, 4.0 GB |
+| Qwen2.5 VL 3B reads figures | 19 | 9 | 44 | 20 of 20 | not run | 21 min | 6.7 s | 4.7 s (6.6 s) | 8.1 s | 4.3 GB | Llama 3B + 1B, 4.0 GB |
+| **Qwen2.5 VL 7B reads figures** | **20** | **11** | 44 | 20 of 20 | **0.882** | 37 min | 17.1 s | 5.2 s (7.3 s) | 8.8 s | 6.9 GB | Llama 3B + 1B, 4.0 GB |
+| 3B figures, Qwen 3B also answers | 17 | 11 | 43 | 20 of 20 | not run | (same index) | 6.7 s | 4.5 s (6.4 s) | 5.8 s | 4.3 GB | Qwen 3B, 4.3 GB |
+
+The 7B setup won: it is the only one that improves both tables and figures, it passes every gate
+(all trick questions refused, at least 90% answered, tables no worse than today, faithfulness at least
+0.85), and its text answers are unchanged (the same 44 answers word for word as without figures). It
+is now the default (`ingestion.figure_parser: qwen2.5vl:7b`). Answering with one Qwen model instead
+of the two Llama models saved no memory and cost two table answers, though spoken answers came back
+2.3 s sooner, so the Llama models still write the answers.
+
+A standalone figure benchmark gave the same picture: 4, 9 and 11 of 31 for no reading, the 3B and the
+7B, every listed chart found, no invalid JSON. Measured on 2026-10-09 on an Apple M5 with 16 GB, on
+commit `317ec48` plus uncommitted work; the runs are saved in `data/benchmarks/` (`sweep-20261009-190140.json`
+and `figures-20261009-185441.json`).
+
+**Known risks, read before you trust a chart answer:**
+
+- **Descriptions are generated and can be wrong.** In a spot check the 7B returned evenly spaced
+  numbers for a line chart that are not in the chart, and left out its labelled end values. Answers
+  from a chart are cited, and the passage says it is generated, but check the page.
+- **Long bar charts are cut short.** With at most 4 series, a bar chart the model reads as one series
+  per bar keeps only its first 4 bars. Labels beside horizontal bars can also fall outside the crop.
+- **Tables the detector misses are dropped.** A table the table detector did not find is classified
+  `table` by the figure model and indexed nowhere (4 such regions in the four PDFs).
+- **The first indexing is slow.** About 37 minutes for these four PDFs with the 7B (most of it deciding
+  that 172 Azure portal screenshots are not charts). Later rebuilds read from the cache.
+- **The questions were drafted by the same 7B model** that reads the charts, then reviewed by hand.
+- **Small sets.** 31 and 29 questions: treat differences of one or two answers as noise. The
+  golden scores here come from the four PDF corpus, so they are not comparable with the 2026-08-21
+  Ragas run above.
+- Only Ollama models are counted in the memory columns; the table models run inside the app.
+
+To run it yourself (the two report PDFs download from the links in `data/eval/figure_questions.json`
+into `data/eval/figure_pdfs/`; the full sweep took about 2 hours plus about 35 minutes of Ragas per finalist here):
+
+```bash
+ollama pull qwen2.5vl:3b && ollama pull qwen2.5vl:7b
+./dev-env/bin/python -m src.eval.figure_benchmark run      # figure readers only, about 2 hours
+./dev-env/bin/python -m src.eval.system_sweep run          # every setup; add --apply to set the winner
+```
+
 ---
+
+## Is every answer checked?
+
+Yes, sentence by sentence, before you see or hear it. The answer model's text is cut into sentences;
+each sentence of three or more words is checked against the passages it was written from, and a
+sentence the documents do not support is dropped. If nothing survives, you get "Insufficient context."
+instead. The Ask tab says how many sentences were removed, and a dropped sentence's source is not cited.
+A question with nothing to search for ("you", "the", "what is it") is refused with "Please ask a full
+question." before any search or model runs.
+
+Which checker does this was decided by measurement, like everything else here. Two candidates were run
+over the 44 golden answers of the current setup (5 passages, unchecked), each answer already scored by
+Ragas; 11 of them scored below 0.85 faithfulness:
+
+| Checker | Answers touched | Low faithfulness answers caught | False alarms (correct answers touched) | Still answered (of 47) | Time per sentence |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| The old name and number check | 0 | 0 | 0 | 44 | ~1 ms |
+| NLI model (`cross-encoder/nli-deberta-v3-small`), threshold 0.3 | 33 | 9 | 24 | 13 | 817 ms |
+| NLI model, threshold 0.5 to 0.9 | 34 to 40 | 9 | 25 to 31 | 12 to 4 | 817 ms |
+| **`llama3.2:1b` asked "is this supported? yes or no"** | **1** | **1** | **0** | **43** | **947 ms** |
+
+A checker had to keep false alarms at 2 or fewer and still answer at least 90% of answerable questions;
+only the 1B judge qualified, so it is the default (`grounding.checker: judge`). With it on, the table and
+figure questions scored exactly as before (20 of 29 and 11 of 31).
+
+Be clear about what that means: the check is cautious, not thorough. It removed one weak answer and never
+a good one, but it let 10 of the 11 answers Ragas doubted through, and it adds about a second per
+sentence. The NLI model was far stricter and much worse: it treats the answer model's paraphrases as
+unsupported and would have refused most correct answers. Measured on 2026-10-10 (Apple M5, 16 GB); the
+run is `data/benchmarks/grounding-20261010-184707.json`. To run it yourself after a context size run:
+`./dev-env/bin/python -m src.eval.grounding_benchmark run`.
 
 ## Voice
 
-Press Record, speak your question in English, press Stop, and the answer is read back aloud.
+Press Record, speak your question in English, press Stop, and the answer is read back aloud. The reply
+is streamed: each sentence is checked, shown in the chat and spoken as soon as it is written, while the
+next one is still being generated. Long sentences are spoken in pieces at commas, so speech can start
+sooner. A recording that is silence, or only "you" or "thank you" (what speech recognition hears in a
+quiet room), is not sent; the dashboard says "I didn't catch that, please try again."
+
+Measured with the latency benchmark on the same index before and after this change (Apple M5, 16 GB,
+first pass, so nothing comes from the cache; medians with p95 in brackets):
+
+| | Before (whole answer, then speech) | After (streamed, every sentence checked) |
+| --- | ---: | ---: |
+| Spoken question, until the first audio is ready | 12.2 s (29.1 s) | 10.9 s (16.3 s) |
+| Longest silence between spoken pieces | not measured | 0 ms |
+| Typed question, full answer | 6.6 s (9.4 s) | 8.2 s (11.9 s) |
+| Spoken question asked again (cached) | 4.4 s | 3.0 s |
+
+Honestly: streaming helps less than hoped. Most answers are one long sentence, and nothing can be spoken
+until that sentence is fully written and checked, so the first audio arrives only 1.3 s sooner, and the
+grounding check (about a second per sentence) costs typed answers 1.6 s. The goal of halving the wait
+to first audio was not met; making the model open with a short first sentence is the next thing to try.
+Runs: `data/benchmarks/20261010-140502-before_streaming.json` and `data/benchmarks/20261010-190523-after_streaming.json`.
+
+Two follow ups were tried, and neither closed the gap:
+
+- **A short first sentence** (`llm.answer_style: short_first`, a prompt asking for a first sentence of 4 to
+  10 words). The answer style runner compared it with today's prompt, both unchecked, on the same code. The
+  3B model mostly ignored the rule (only 23% of first sentences came in at 10 words or less), faithfulness
+  fell to 0.844 (the gate is 0.85), and first audio got slower (7.4 s against 6.4 s). It was not adopted, so
+  `llm.answer_style` stays `full`. Because the answers did not change, the grounding benchmark was not run
+  again. Run: `data/benchmarks/style-20261010-211519.json`
+  (`./dev-env/bin/python -m src.eval.answer_style run --apply`).
+- **Speaking the first sentence while it is checked** (tried and removed). The voice started synthesizing
+  the first sentence as soon as it was written and played it only once the check approved it. Measured with
+  the check on, first pass, 10 spoken questions: first audio p50 12.4 s with it and 12.3 s without, so no
+  measurable gain (single questions moved by up to 1.5 s either way). It was removed to keep the voice path
+  simple. Runs: `data/benchmarks/20261011-145910-after_short_first.json` and
+  `data/benchmarks/20261011-150947-after_short_first_no_drafts.json`.
+
+**Machine conditions matter more than these changes.** With the same unchecked setup, the answer model took
+3.3 s in one run and 5.5 s in another on the same day, and the reranker 0.7 s against 1.1 s; the 2026-10-11
+runs above were made on battery with Low Power Mode on. So every latency run now records the power source,
+Low Power Mode and the grounding checker in effect (`meta.machine.power` and
+`meta.grounding_checker_effective`, also printed on the machine line), and the goal for spoken answers is a
+fixed one: first audio p50 at most 6.1 s (half the 12.2 s measured before streaming), judged on the median of
+two runs made on mains power with Low Power Mode off and the check on. Only compare runs made under the
+same conditions. Those clean runs have not been made yet: the goal is accepted on the expectation that a
+machine on mains power is fast enough, which is unmeasured (a rough estimate is 7 to 7.5 s with the check on).
+
+## Observability
+
+The Observability tab shows how the system behaves over time, from every question asked: how many were
+answered or refused (and why), the cache hit rate, how often the grounding check passes, the time each
+stage takes (median and p95, including first audio for spoken questions), the latest quality scores from
+the newest benchmark run, and the 50 most recent questions; select one to see its full trace (stages,
+retrieved sources and their kind, removed sentences, the answer). Pick the last hour, day, week, or all.
+
+Every question is stored in `vectordb/traces.sqlite3`, beside the index, so history survives restarts;
+the newest 10,000 are kept (`observability.max_traces`). The same data is available from the API:
+`/api/metrics?window=24h`, `/api/traces` and `/api/traces/<id>`.
+
+**These traces contain your questions and answers.** Neither the API nor the dashboard has a login, so
+both are meant for your own machine only: Docker publishes them on `127.0.0.1`, and the local commands
+below do the same. To reach them from another device, use an SSH tunnel rather than opening the ports.
 
 ---
 
@@ -196,7 +409,10 @@ Use Python 3.12, the version the Docker image and CI use:
 python3.12 -m venv dev-env
 ./dev-env/bin/pip install -r requirements.txt
 ./dev-env/bin/python -m spacy download en_core_web_sm
+brew install tesseract     # on Linux: sudo apt install tesseract-ocr
 ```
+
+Tesseract reads the rare table page that has no text layer (a scanned page inside a normal PDF).
 
 **2. Download the models**
 
@@ -205,6 +421,7 @@ The language models come from [Ollama](https://ollama.com). Install it, start it
 ```bash
 ollama pull llama3.2:3b        # writes the answers
 ollama pull llama3.2:1b        # rewrites follow up questions
+ollama pull qwen2.5vl:7b       # reads charts while indexing (about 6 GB; see How well does it read charts?)
 ```
 
 The voice model (Kokoro, about 340 MB) goes into `models/`:
@@ -216,7 +433,9 @@ curl -L -o models/voices-v1.0.bin  https://github.com/thewh1teagle/kokoro-onnx/r
 ```
 
 The speech recognition model (Whisper) and the search models download by themselves the first time
-they are used, about 300 MB in all, so the first spoken question is slower.
+they are used, about 300 MB in all, so the first spoken question is slower. The table models (the
+detector, 115 MB, and the fine tuned LayoutLMv3, 501 MB) download the first time documents are
+indexed.
 
 **3. Add your documents**
 
@@ -227,8 +446,8 @@ Put PDF, TXT or MD files into `data/raw/`, or upload them later from the dashboa
 Two terminals, both from the project folder:
 
 ```bash
-./dev-env/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000   # the engine
-./dev-env/bin/python app.py                                           # the dashboard
+./dev-env/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-proxy-headers   # the engine
+VRAG_UI_HOST=127.0.0.1 ./dev-env/bin/python app.py                       # the dashboard
 ```
 
 Open **http://localhost:7860**. Use `localhost`, not your machine's network address — browsers only
@@ -276,6 +495,16 @@ Everything tunable lives in `config/config.yaml` — no code changes needed:
 | `cache.enabled`, `cache.max_entries` | Turn caching off, or change how much is remembered. |
 | `voice.stt.model`, `voice.tts.voice` | Which speech recognition model and which voice are used. |
 | `ingestion.chunk_size` | How large each document piece is. Changing this needs a re-index. |
+| `ingestion.table_parser` | How tables in PDFs are read: `layoutlmv3` (default), `pdfplumber`, `qwen2.5vl:3b`, `qwen2.5vl:7b`, or `none` to skip tables. The vision models need `ollama pull` first. Changing it rebuilds the index once. |
+| `ingestion.figure_parser` | How charts and diagrams in PDFs are read: `qwen2.5vl:7b` (default), `qwen2.5vl:3b` (faster, fewer right answers), or `none` to skip figures and index as fast as before. Changing it rebuilds the index once. |
+| `grounding.checker` | How each answer sentence is checked before it is shown or spoken: `judge` (default, the 1B model asked yes or no), `nli` (an entailment model, much stricter), or `none` to show answers unchecked. |
+| `voice.no_speech_threshold` | How sure speech recognition must be that a recording is silence before it is ignored (default 0.6). |
+| `observability.max_traces` | How many past questions the Observability tab keeps (default 10,000). |
+| `ingestion.table_detect_threshold` | How sure the detector must be that a page holds a table (default 0.99). Lower it if tables are missed. |
+| `upload.max_mb`, `upload.max_pdf_pages` | The largest document you can upload (25 MB, 300 pages). |
+| `api.max_concurrent_answers` | How many questions are answered at once (default 4); the next one is told the system is busy. |
+| `api.rate_limit.questions_per_min`, `api.rate_limit.changes_per_min` | Per browser limits through the dashboard (20 questions, 5 uploads or deletes a minute). Scripts on this machine are not limited. |
+| `api.allowed_hosts`, `api.docs_enabled` | Host names the API answers to, and whether `/docs` is served. Add your public host and turn docs off before deploying. |
 
 Save the file and restart the engine for changes to take effect.
 
@@ -298,16 +527,21 @@ No Python needed on your machine, only Docker (give Docker Desktop at least 8 GB
    ```
 
 3. The first time, in a second terminal (step 2 keeps the first one busy), pull the language models
-   into the Ollama container (about 3.3 GB):
+   into the Ollama container (about 9.3 GB):
 
    ```bash
    docker compose exec ollama ollama pull llama3.2:3b
    docker compose exec ollama ollama pull llama3.2:1b
+   docker compose exec ollama ollama pull qwen2.5vl:7b    # reads charts (about 6 GB)
    ```
 
-Then open **http://localhost:7860**. It can take a few minutes to answer the first time: the image
+Then open **http://localhost:7860**. Both ports are published on `127.0.0.1` only, because the API
+and the Observability tab show your stored questions and have no login. It can take a few minutes to
+answer the first time: the image
 build (about 3.8 GB) and the search model download both happen before the dashboard starts, and
-Whisper downloads on the first spoken question. Later starts reuse everything. The first
+Whisper downloads on the first spoken question. The table models (about 620 MB) download the first
+time a PDF is indexed. To use a vision model as the table reader instead, pull it into the Ollama
+container (`docker compose exec ollama ollama pull qwen2.5vl:7b`) and set `ingestion.table_parser`. Later starts reuse everything. The first
 start also logs an index rebuild of an empty corpus; that is expected.
 
 The containers start with no documents: upload yours from the dashboard. They are kept in Docker
@@ -325,7 +559,47 @@ On Linux, Ollama on the host must listen on all interfaces (`OLLAMA_HOST=0.0.0.0
 
 To start over, deleting documents, index, models and caches in Docker: `docker compose down -v`.
 
+The containers run as a non root user (uid 10001). If your Docker volumes were created by an older
+version of this project, hand them to that user once before starting:
+
+```bash
+docker compose run --rm --user root api chown -R 10001:10001 /app/data /app/vectordb /cache
+```
+
 The commands in this README are for macOS and Linux.
+
+## Security
+
+There is no login: the API and dashboard are meant for your machine (or, for the demo, only the
+dashboard port is public). What protects them (spec 0008):
+
+- **Other websites cannot change your corpus.** The API answers only to known host names, and refuses
+  uploads, deletes and other changes sent from another site's page.
+- **Uploads are checked.** At most 25 MB and 300 pages; a `.pdf` must really be a PDF, text must be
+  UTF-8, and a name already in the corpus is refused rather than overwritten.
+- **Requests are bounded.** Questions up to 1,000 characters with up to 6 turns of history; at most 4
+  answered at once; per browser rate limits; every model call has a timeout.
+- **Errors say little.** You see a short reference; the details go to the API log.
+- **Indexing never interrupts answers.** A new index is built beside the old one and swapped in.
+
+**Dependency audit** (`pip-audit`, reports in `docs/security/`, 2026-10-15). pypdf (6.16.1 to 6.19.0)
+and urllib3 (2.7.0 to 2.8.0) were updated. These remain, because their fixes need Gradio 6, a major
+upgrade planned as its own feature before the public demo:
+
+| Package | Advisories | Applies here? |
+| --- | --- | --- |
+| gradio 5.50.0 | PYSEC-2026-63, -65 (OAuth) | No: the dashboard has no login components. |
+| | PYSEC-2026-64, -2179 (path traversal on Windows, FileExplorer) | No: Linux and macOS only, no FileExplorer. |
+| | PYSEC-2026-66 (SSRF) | Possibly: fixed in Gradio 6.6. Until then, keep the dashboard on your machine. |
+| | PYSEC-2026-2178 (session fixation across Spaces) | Yes for the Hugging Face demo: upgrade before it goes public. |
+| | PYSEC-2026-211 (audio cache key) | No fix released yet. |
+| starlette 0.52.1 | PYSEC-2026-161, -248 (Host header and path in `request.url`) | Mitigated: the API refuses unknown hosts before any route runs. |
+| | PYSEC-2026-249 (form part size limits) | Mitigated: request bodies are capped while they are read. |
+| | PYSEC-2026-2280, -2281 (`HTTPEndpoint`, `StaticFiles` on Windows) | No: neither is used. |
+| pillow 11.3.0 | 18 advisories (crafted PSD, FITS, font, TGA and JPEG2000 images, a PDF hang) | Partly: images embedded in uploaded PDFs can reach Pillow. Upload limits bound the damage; fixed by Gradio 6, which allows Pillow 12. |
+
+accelerate, diskcache, hydra-core, langgraph-sdk, multidict and ragas also have advisories, but they
+are only in the development and evaluation environment, not in the app or its Docker image.
 
 ---
 

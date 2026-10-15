@@ -558,14 +558,14 @@ def test_changing_the_figure_settings_rebuilds_the_index_once(tmp_path, monkeypa
     routes.ensure_index_format()
     routes.ensure_index_format()
 
-    assert manager.resets == 1
+    assert len(manager.ingested) == 1
     assert manager.index_tables() == "none|fig:qwen2.5vl:7b|800"
 
 
 def test_health_reports_the_effective_figure_parser(monkeypatch):
     import asyncio
     import ollama
-    monkeypatch.setattr(ollama, "list", lambda: type("L", (), {"models": []})())
+    monkeypatch.setattr(routes, "ollama_status", lambda: "online")
     monkeypatch.setattr(routes, "get_llm", lambda: type("LLM", (), {"generation_model": "llama3.2:3b"})())
     monkeypatch.setattr(figures, "_effective_parser", "qwen2.5vl:7b")
-    assert asyncio.run(routes.health_check())["figure_parser_effective"] == "qwen2.5vl:7b"
+    assert routes.health_check()["figure_parser_effective"] == "qwen2.5vl:7b"

@@ -26,11 +26,12 @@ def test_dense_semantic_retrieval(store):
 class _StubStore:
     """Returns one fixed candidate regardless of the query."""
     CANDIDATES = [{"id": "c1", "content": "stub", "metadata": {}}]
+    db_manager = type("Manager", (), {"active": None})()
 
-    def search_sparse(self, query, top_k):
+    def search_sparse(self, query, top_k, generation=None):
         return self.CANDIDATES
 
-    def search_dense(self, query, top_k):
+    def search_dense(self, query, top_k, generation=None):
         return self.CANDIDATES
 
     def fuse(self, dense_results, sparse_results, top_k=30):
@@ -54,6 +55,7 @@ def build_retriever(scores):
     retriever.top_k_rerank = 3
     retriever.top_k_candidates = 12
     retriever.top_k_retrieval = 30
+    retriever.raw_dir = "/nonexistent"        # no corpus folder: the deleted source filter is skipped
     return retriever
 
 
@@ -74,3 +76,57 @@ def test_gate_respects_top_k_rerank():
     """Only the top 3 reranked results are ever considered."""
     chunks, _ = build_retriever([0.9, 0.9, 0.9, 0.9]).search_and_rerank("anything")
     assert len(chunks) == 3
+
+
+# --- spec 0008, AC-8: a deleted document stops being cited at once ---
+
+def candidates(*sources):
+    return [{"id": f"c{i}", "content": "x", "metadata": {"source": s}} for i, s in enumerate(sources)]
+
+
+def test_chunks_from_a_deleted_document_are_dropped_before_reranking(tmp_path):
+    """covers: AC-8"""
+    (tmp_path / "kept.pdf").write_bytes(b"%PDF-")
+    retriever = build_retriever([0.9])
+    retriever.raw_dir = str(tmp_path)
+
+    kept = retriever.present_sources(candidates("kept.pdf", "deleted.md", "kept.pdf"))
+
+    assert [c["metadata"]["source"] for c in kept] == ["kept.pdf", "kept.pdf"]
+
+
+def test_chunks_without_a_source_are_dropped_when_a_corpus_folder_exists(tmp_path):
+    """covers: AC-8"""
+    retriever = build_retriever([0.9])
+    retriever.raw_dir = str(tmp_path)
+
+    assert retriever.present_sources([{"id": "c", "content": "x", "metadata": None}]) == []
+
+
+def test_without_a_corpus_folder_nothing_is_filtered():
+    """covers: AC-8"""
+    retriever = build_retriever([0.9])
+
+    assert retriever.present_sources(candidates("a.md")) == candidates("a.md")
+
+
+def test_one_question_reads_one_generation_for_both_searches():
+    """A swap between the dense and keyword search must not mix generations. covers: AC-7"""
+    seen = []
+
+    class Store(_StubStore):
+        def search_sparse(self, query, top_k, generation=None):
+            seen.append(generation)
+            return self.CANDIDATES
+
+        def search_dense(self, query, top_k, generation=None):
+            seen.append(generation)
+            return self.CANDIDATES
+
+    retriever = build_retriever([0.9])
+    retriever.store = Store()
+    retriever.store.db_manager = type("Manager", (), {"active": "generation 7"})()
+
+    retriever.search_and_rerank("anything")
+
+    assert seen == ["generation 7", "generation 7"]

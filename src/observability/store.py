@@ -149,8 +149,8 @@ class TraceStore:
                           "VALUES (?, ?, ?, ?, ?, ?)",
                           [(trace_id, s["layer"], float(s.get("elapsed_ms") or 0.0), s.get("details"),
                             s.get("prompt_tokens"), s.get("output_tokens")) for s in spans])
-            c.execute("DELETE FROM traces WHERE id NOT IN (SELECT id FROM traces ORDER BY id DESC LIMIT ?)",
-                      (self.max_traces,))
+            # By id threshold, not a NOT IN scan (spec 0008, AC-18); ids only grow, so this keeps the newest
+            c.execute("DELETE FROM traces WHERE id <= (SELECT MAX(id) FROM traces) - ?", (self.max_traces,))
             return trace_id
         return self._write("finish a trace", write)
 

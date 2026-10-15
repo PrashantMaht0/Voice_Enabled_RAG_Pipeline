@@ -13,18 +13,20 @@ class HybridStore:
         self.db_manager = db_manager or VectorDBManager()
         self.hybrid_alpha = pick(hybrid_alpha, "retrieval.hybrid_alpha", 0.5)
 
-    def search_dense(self, query: str, top_k: int) -> List[Dict]:
-        """The top_k nearest chunks by embedding similarity."""
+    def search_dense(self, query: str, top_k: int, generation=None) -> List[Dict]:
+        """The top_k nearest chunks by embedding similarity, in the given generation (default: the active one)."""
+        generation = generation or self.db_manager.active
         vector = self.db_manager.embedder.embed_text(query)
         response = self.db_manager.qdrant_client.query_points(
-            collection_name=self.db_manager.collection_name, query=vector, limit=top_k)
+            collection_name=generation.collection_name, query=vector, limit=top_k)
         return [{"id": res.payload["chunk_id"], "content": res.payload["content"],
                  "metadata": res.payload["metadata"], "score": res.score, "source_engine": "qdrant"}
                 for res in response.points]
 
-    def search_sparse(self, query: str, top_k: int) -> List[Dict]:
-        """The top_k chunks by BM25 keyword score; empty when Tantivy cannot parse the query."""
-        index = self.db_manager.tantivy_index
+    def search_sparse(self, query: str, top_k: int, generation=None) -> List[Dict]:
+        """The top_k chunks by BM25 keyword score, in the given generation (default: the active one); empty when
+        Tantivy cannot parse the query."""
+        index = (generation or self.db_manager.active).tantivy_index
         index.reload()                            # see documents committed since the last search
         searcher = index.searcher()
         try:

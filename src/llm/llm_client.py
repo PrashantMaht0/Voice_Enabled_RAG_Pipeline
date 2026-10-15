@@ -32,7 +32,10 @@ class LocalLLMClient:
         if self.answer_style not in ANSWER_STYLES:
             print(f"[LLM] WARNING: unknown llm.answer_style {self.answer_style!r}, using 'full'")
             self.answer_style = "full"
-        self.client = ollama.Client(host=host) if host else ollama
+        # Always a client with a timeout (per response or stream chunk), never the module default that waits
+        # forever (spec 0008, AC-11); host None means OLLAMA_HOST or the local default
+        self.timeout_s = float(pick(None, "llm.timeout_s", 120))
+        self.client = ollama.Client(host=host, timeout=self.timeout_s)
 
     def rewrite_query(self, query: str, chat_history: List[Dict[str, str]], tracer: Optional[Any] = None) -> str:
         """Rewrites conversational queries into standalone queries; the call's tokens go to the request's tracer
@@ -78,28 +81,27 @@ class LocalLLMClient:
             {"role": "user", "content": user_content}
         ]
 
-        try:
-            stream = self.client.chat(
-                model=self.generation_model,
-                messages=messages,
-                stream=True,
-                options={
-                    "temperature": self.temperature,
-                    "top_p": 0.1,
-                    "num_predict": self.max_tokens
-                }
-            )
+        # A failed or timed out call raises: the answer pipeline turns it into a short error with a reference,
+        # instead of the error text becoming part of a cached "answer" (spec 0008, AC-11)
+        stream = self.client.chat(
+            model=self.generation_model,
+            messages=messages,
+            stream=True,
+            options={
+                "temperature": self.temperature,
+                "top_p": 0.1,
+                "num_predict": self.max_tokens
+            }
+        )
 
-            for chunk in stream:
-                token = chunk.get("message", {}).get("content", "")
-                if token:
-                    yield token
-                    
-                if chunk.get("done", False) and tracer:      # the last chunk carries the token counts
-                    tracer.add_tokens("generation", *token_counts(chunk))
+        for chunk in stream:
+            token = chunk.get("message", {}).get("content", "")
+            if token:
+                yield token
+                
+            if chunk.get("done", False) and tracer:      # the last chunk carries the token counts
+                tracer.add_tokens("generation", *token_counts(chunk))
 
-        except Exception as e:
-            yield f" Error processing response: {str(e)}"
 
     def generate(self, query: str, context_chunks: List[str], tracer: Optional[Any] = None) -> str:
         """The whole answer at once (the stream joined), timed as the "generation" span when a tracer is

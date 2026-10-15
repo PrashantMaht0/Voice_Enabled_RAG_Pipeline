@@ -61,6 +61,7 @@ llm:
   temperature: 0.0
   max_tokens: 256
   answer_style: "full"             # full | short_first (a 4 to 10 word first sentence, spec 0006); set by answer_style --apply
+  timeout_s: 120                   # longest wait for each Ollama reply or stream chunk (spec 0008)
 
 # --- Cache ---
 # Two-level query cache keyed on the resolved (rewritten, English-normalised) query.
@@ -87,4 +88,30 @@ grounding:
 observability:
   db_path: null                    # default: vectordb/traces.sqlite3, beside the Qdrant storage
   max_traces: 10000                # older traces are deleted
+
+# --- Hardening (spec 0008) ---
+# No login: these limits plus network binding protect the API. Add your public host to allowed_hosts and
+# turn docs off before deploying.
+api:
+  allowed_hosts: ["localhost", "127.0.0.1", "[::1]", "api"]   # Host header the API answers to
+  allowed_origins: []              # extra browser origins allowed to make changes (same origin always is)
+  trusted_callers: ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"]
+  docs_enabled: true               # /docs, /redoc and /openapi.json
+  max_body_kb: 64                  # every request body except uploads
+  max_query_chars: 1000
+  max_history_turns: 6
+  max_turn_chars: 2000
+  max_concurrent_answers: 4        # the next question gets 503 "busy"
+  busy_retry_after_s: 5
+  rate_limit:                      # per browser (X-VRAG-Client from the dashboard); local scripts are exempt
+    questions_per_min: 20
+    changes_per_min: 5             # uploads, deletes, clearing the cache
+upload:
+  max_mb: 25
+  max_pdf_pages: 300
+index:
+  retire_after_s: 30               # a replaced index generation is deleted this long after the swap
+health:
+  ollama_timeout_s: 3
+  cache_s: 10
 

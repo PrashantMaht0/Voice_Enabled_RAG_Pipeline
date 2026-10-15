@@ -31,3 +31,4 @@ data/eval/*
 
 # --- macOS ---
 .DS_Store
+.claude/
