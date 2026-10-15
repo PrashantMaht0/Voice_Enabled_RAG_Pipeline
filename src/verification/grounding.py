@@ -7,9 +7,10 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Tuple
 
 from src.utils.config import get
+from src.utils.metrics import token_counts
 from src.utils.text_sanitizer import CITATION_TAG, SOURCE_HEADER, is_refusal
 
 CHECKERS = ("none", "nli", "judge")
@@ -205,20 +206,30 @@ class JudgeChecker:
 
     def ask(self, context: str, sentence: str) -> Optional[bool]:
         """The judge's yes (True), no (False), or None for a reply that is neither."""
+        return self.ask_with_usage(context, sentence)[0]
+
+    def ask_with_usage(self, context: str, sentence: str) -> Tuple[Optional[bool], int, int]:
+        """The verdict plus the call's prompt and output tokens. The checker is shared by every request, so the
+        counts are returned, never kept here (spec 0007)."""
         import json
         response = self.client.chat(
             model=self.model_name,
             messages=[{"role": "user", "content": JUDGE_PROMPT.format(context=context, sentence=sentence)}],
             format=JUDGE_SCHEMA, options={"temperature": 0, "num_predict": 20, "num_ctx": 4096})
+        prompt, output = token_counts(response)
         try:
             answer = json.loads(response.message.content).get("supported")
         except (ValueError, AttributeError):
-            return None
-        return {"yes": True, "no": False}.get(answer)
+            return None, prompt, output
+        return {"yes": True, "no": False}.get(answer), prompt, output
+
+    def context(self, chunks: List[str]) -> str:
+        """Every retrieved chunk's body, as the judge sees it."""
+        return "\n\n".join(chunk_body(c) for c in chunks)
 
     def supported(self, sentence: str, chunks: List[str]) -> Optional[bool]:
         """The judge's verdict on the sentence with every retrieved chunk as context."""
-        return self.ask("\n\n".join(chunk_body(c) for c in chunks), sentence)
+        return self.ask(self.context(chunks), sentence)
 
 
 _checker = None
@@ -298,9 +309,10 @@ class GroundingResult:
 
 class SentenceJudge:
     """Applies the drop policy sentence by sentence, so streaming can emit each approved sentence at once."""
-    def __init__(self, chunks: List[str], checker=None):
+    def __init__(self, chunks: List[str], checker=None, tracer: Optional[Any] = None):
         self.chunks = chunks
         self.checker = checker or effective_checker()
+        self.tracer = tracer                # the request's tracer: judge tokens go to its `grounding` layer
         self.result = GroundingResult(checker=self.checker.name)
         self._held: List[str] = []          # short sentences waiting for a checked sentence to survive
 
@@ -310,7 +322,7 @@ class SentenceJudge:
             return True
         started = time.perf_counter()
         try:
-            ok = self.checker.supported(plain(sentence), self.chunks)
+            ok = self._verdict(plain(sentence))
         except Exception as e:                 # fail open for this answer; try again on the next request
             self.result.unchecked_reason = f"{type(e).__name__}: {e}"
             ok = True
@@ -321,6 +333,14 @@ class SentenceJudge:
                 ok = True
         self.result.seconds += time.perf_counter() - started
         return ok
+
+    def _verdict(self, sentence: str) -> Optional[bool]:
+        """The checker's verdict; a judge's tokens go to the request's tracer as each call returns."""
+        if self.tracer is not None and hasattr(self.checker, "ask_with_usage"):
+            ok, prompt, output = self.checker.ask_with_usage(self.checker.context(self.chunks), sentence)
+            self.tracer.add_tokens("grounding", prompt, output)
+            return ok
+        return self.checker.supported(sentence, self.chunks)
 
     def judge(self, sentence: str) -> List[str]:
         """Sentences that may be shown now (possibly none, possibly held short ones too)."""

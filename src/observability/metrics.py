@@ -1,4 +1,5 @@
-"""Metrics over stored traces (spec 0006, trace store child): counts, rates, p50 and p95, latest quality."""
+"""Metrics over stored traces (spec 0006, trace store child; spec 0007): counts, rates, percentiles, tokens and the
+latest quality."""
 import json
 import math
 from datetime import datetime, timedelta, timezone
@@ -23,8 +24,15 @@ def nearest_rank(values: List[float], q: float) -> Optional[float]:
 
 
 def percentiles(values: List[float]) -> Dict:
-    """p50, p95 and the count of the values."""
-    return {"p50": nearest_rank(values, 0.5), "p95": nearest_rank(values, 0.95), "n": len(values)}
+    """p50, p95, p99 and the count of the values."""
+    return {"p50": nearest_rank(values, 0.5), "p95": nearest_rank(values, 0.95), "p99": nearest_rank(values, 0.99),
+            "n": len(values)}
+
+
+def is_answered(path: str, answer: Optional[str]) -> bool:
+    """The one answered rule (spec 0007): the answered path, or a cache hit whose answer is not a refusal. The
+    Answered card and the Answered column both use it."""
+    return path == "answered" or (path == "cache" and not is_refusal(answer or ""))
 
 
 def since(window: str) -> Optional[str]:
@@ -67,8 +75,8 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
     where, params = ("WHERE path != 'in_progress'" + (" AND created_at >= ?" if start else "")), \
         ((start,) if start else ())
     rows = [dict(r) for r in store.query(
-        f"SELECT id, path, answer, grounding_checker, sentences_dropped, total_ms, first_sentence_ms, "
-        f"stt_ms, first_audio_ms, spoken_total_ms FROM traces {where}", params)]
+        f"SELECT id, path, answer, confidence, grounding_checker, sentences_dropped, total_ms, first_sentence_ms, "
+        f"stt_ms, first_audio_ms, spoken_total_ms, prompt_tokens, output_tokens FROM traces {where}", params)]
 
     cache = [r for r in rows if r["path"] == "cache"]
     cache_refused = [r for r in cache if is_refusal(r["answer"] or "")]
@@ -76,7 +84,7 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
     errors, aborted = count("error"), count("aborted")
     counts = {
         "asked": len(rows),
-        "answered": count("answered") + len(cache) - len(cache_refused),
+        "answered": sum(is_answered(r["path"], r["answer"]) for r in rows),
         "refused_gate": count("gated") + len(cache_refused),
         "refused_grounding": count("refused_grounding"),
         "refused_model": count("refused_model"),
@@ -89,12 +97,22 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
     refused = sum(counts[k] for k in ("refused_gate", "refused_grounding", "refused_model", "refused_empty"))
     checked = [r for r in rows if r["path"] in ("answered", "refused_grounding") and r["grounding_checker"]
                and "unchecked" not in r["grounding_checker"]]
+    passed_check = sum(not r["sentences_dropped"] for r in checked)
+    reached = [r for r in rows if r["confidence"] is not None and r["path"] not in ("cache", "error", "aborted")]
+    passed_gate = sum(r["path"] != "gated" for r in reached)
     rates = {
         "cache_hit_rate": round(len(cache) / served, 3) if served else None,
         "refusal_rate": round(refused / served, 3) if served else None,
-        "grounding_pass_rate": round(sum(not r["sentences_dropped"] for r in checked) / len(checked), 3)
-        if checked else None,
+        "grounding_pass_rate": round(passed_check / len(checked), 3) if checked else None,
+        "retrieval_pass_rate": round(passed_gate / len(reached), 3) if reached else None,
+        "error_rate": round(errors / len(rows), 4) if rows else None,
     }
+    counted = [r for r in rows if r["prompt_tokens"] is not None]
+    prompt = sum(r["prompt_tokens"] for r in counted)
+    output = sum(r["output_tokens"] or 0 for r in counted)
+    tokens = {"prompt": prompt, "output": output, "total": prompt + output,
+              "per_question": round((prompt + output) / len(counted)) if counted else None,
+              "counted": len(counted), "asked": len(rows)}
 
     answered_ids = [r["id"] for r in rows if r["path"] == "answered"]
     stages = {}
@@ -110,5 +128,11 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
         stages[field] = percentiles([r[field] for r in answered_rows if r[field] is not None])
     voice = {field: percentiles([r[field] for r in rows if r[field] is not None]) for field in VOICE_FIELDS}
 
+    latency = percentiles([r["total_ms"] for r in answered_rows if r["total_ms"] is not None])
+    latency.pop("p95")
+
     return {"window": window, "counts": counts, "rates": rates, "stages": stages, "voice": voice,
+            "retrieval": {"reached": len(reached), "passed": passed_gate},
+            "grounding": {"checked": len(checked), "passed": passed_check},
+            "latency": latency, "tokens": tokens,
             "failed_writes": store.failed_writes, "quality": latest_quality(benchmarks_dir)}

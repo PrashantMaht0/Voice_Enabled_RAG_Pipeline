@@ -31,13 +31,20 @@ custom_css = """
 .metric-value { font-size: 1.5rem; font-weight: bold; color: #38bdf8; }
 .metric-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
 .table-scroll { overflow-x: auto; }
-/* Phone width: columns stack, buttons stay reachable, tables scroll inside themselves (spec 0006) */
+/* Observability tab (spec 0007): two rows of five cards, the trace panel beside the recent table */
+.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.metric-note { font-size: 0.7rem; color: #94a3b8; margin-top: 4px; overflow-wrap: anywhere; }
+.obs-warning { background: #451a03; color: #fde68a; border: 1px solid #b45309; border-radius: 8px; padding: 8px 12px; }
+.trace-panel { min-height: 240px; max-height: 560px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; padding: 4px 12px; }
+/* Phone width: columns stack, buttons stay reachable, tables scroll inside themselves (spec 0006). Gradio puts
+   its own container selector in front of every rule here, so selectors start below the container. */
 @media (max-width: 767px) {
   html, body, .gradio-container { overflow-x: hidden; max-width: 100vw; }
-  .gradio-container .row { flex-direction: column !important; flex-wrap: nowrap !important; }
-  .gradio-container .row > * { width: 100% !important; min-width: 0 !important; flex: 1 1 auto !important; }
-  .gradio-container button { width: 100%; min-height: 44px; }
-  .gradio-container .table-wrap, .gradio-container table { overflow-x: auto; display: block; max-width: 100%; }
+  .row { flex-direction: column !important; flex-wrap: nowrap !important; }
+  .row > * { width: 100% !important; min-width: 0 !important; flex: 1 1 auto !important; }
+  .row button { width: 100%; min-height: 44px; }
+  .table-wrap, table { overflow-x: auto; display: block; max-width: 100%; }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 """
@@ -178,9 +185,11 @@ def voice_query(audio, history):
                          spoken_total_ms=last_audio_ms)
 
 
-def metric_card(value, label):
-    """One metric card (a value over a small label) as HTML."""
-    return f"<div class='metric-box'><div class='metric-value'>{value}</div><div class='metric-label'>{label}</div></div>"
+def metric_card(value, label, note=None):
+    """One metric card (a value over a small label, and an optional smaller second line) as HTML."""
+    note_html = f"<div class='metric-note'>{note}</div>" if note else ""
+    return (f"<div class='metric-box'><div class='metric-value'>{value}</div>"
+            f"<div class='metric-label'>{label}</div>{note_html}</div>")
 
 
 def blank_metrics():
@@ -421,7 +430,9 @@ STAGE_NAMES = {"rewrite": "Rewrite", "bm25": "Keyword search", "vector": "Vector
                "rerank": "Rerank", "generation": "Generation", "grounding": "Grounding check",
                "first_sentence_ms": "First sentence", "total_ms": "Total", "stt_ms": "Speech recognition (voice)",
                "first_audio_ms": "First audio (voice)", "spoken_total_ms": "Spoken total (voice)"}
-NO_TRAFFIC = "_No questions in this window yet._"
+NO_TRAFFIC = "<p><em>No questions in this window yet.</em></p>"   # shown in gr.HTML, so HTML, not Markdown
+NO_TRACE = "_Select a question to see its trace._"
+TOKEN_LAYERS = ("rewrite", "generation", "grounding")
 
 
 def percent(value):
@@ -429,44 +440,106 @@ def percent(value):
     return "—" if value is None else f"{value * 100:.0f}%"
 
 
-def fetch_observability(window_label):
-    """Rate cards, stage table, quality card and recent questions for the chosen window."""
-    try:
-        m = requests.get(f"{API_BASE}/metrics", params={"window": WINDOWS[window_label]}, timeout=30).json()
-        recent = requests.get(f"{API_BASE}/traces", params={"limit": 50}, timeout=30).json()
-    except Exception as e:
-        return f"API error: {e}", [], "", [], [], ""
+def plural(n, word):
+    """'1 error', '3 errors'."""
+    return f"{n:,} {word}" + ("" if n == 1 else "s")
+
+
+def format_ms(value):
+    """Rounded to whole ms first, then ms below 1,000 and seconds with one decimal from 1,000 up."""
+    if value is None:
+        return "—"
+    ms = round(value)
+    return f"{ms:,} ms" if ms < 1000 else f"{ms / 1000:.1f} s"
+
+
+def error_rate(errors, asked):
+    """Errors over asked from the counts, one decimal; never '0.0%' while there are errors."""
+    if not asked:
+        return "—"
+    value = errors / asked * 100
+    return "<0.1%" if errors and round(value, 1) == 0 else f"{value:.1f}%"
+
+
+def failed_writes_line(failed):
+    """The warning above the cards, only when the trace store failed to save something."""
+    if not failed:
+        return ""
+    who = "1 question" if failed == 1 else f"{failed:,} questions"
+    return f"<div class='obs-warning'>{who} could not be saved to the trace store since the API started.</div>"
+
+
+def observability_cards(m):
+    """The ten cards in the wireframe's order (spec 0007, AC-2)."""
     c, r = m["counts"], m["rates"]
-    cards = [metric_card(c["asked"], "Asked"), metric_card(c["answered"], "Answered"),
-             metric_card(percent(r["refusal_rate"]), "Refusal rate"), metric_card(percent(r["cache_hit_rate"]), "Cache hits"),
-             metric_card(percent(r["grounding_pass_rate"]), "Grounding pass")]
-    if m.get("failed_writes"):
-        cards.append(metric_card(m["failed_writes"], "Failed writes"))
-    cards_html = "<div style='display:flex;flex-wrap:wrap;gap:8px'>" + "".join(
-        f"<div style='flex:1 1 120px'>{card}</div>" for card in cards) + "</div>"
-    if not c["asked"]:
-        cards_html += f"\n\n{NO_TRAFFIC}"
-    fmt = lambda v: "—" if v is None else f"{v:.0f}"
-    stages = [[STAGE_NAMES.get(k, k), fmt(v["p50"]), fmt(v["p95"]), v["n"]]
-              for k, v in {**m["stages"], **m["voice"]}.items() if v["n"]]
-    q = m.get("quality")
-    quality = "_No benchmark run found._" if not q else (
-        f"**Latest quality scores** · {q['file']} · finished {q['finished']} · setup {q['winner']}\n\n"
-        f"Golden answered {q['golden_answered']} of {q['golden_in_scope']} · trick questions refused "
-        f"{q['golden_refused']} of {q['golden_out_of_scope']} · faithfulness {q['faithfulness']} · "
-        f"tables {q['tables']} of 29 · figures {q['figures']} of 31")
-    rows = [[t["created_at"][:19].replace("T", " "), t["channel"], t["question"], t["path"], fmt(t["total_ms"])]
-            for t in recent]
-    return cards_html, stages, quality, rows, [t["id"] for t in recent], "_Select a question to see its trace._"
+    ret, grd, lat, tok = m["retrieval"], m["grounding"], m["latency"], m["tokens"]
+    refused = c["refused_gate"] + c["refused_grounding"] + c["refused_model"] + c["refused_empty"]
+    note = lambda rate, text: text if rate is not None else None
+    cards = [
+        metric_card(f"{c['asked']:,}", "Questions"),
+        metric_card(f"{c['answered']:,}", "Answered"),
+        metric_card(percent(r["retrieval_pass_rate"]), "Retrieval quality",
+                    note(r["retrieval_pass_rate"], f"{ret['passed']:,} of {ret['reached']:,} passed the gate")),
+        metric_card(percent(r["grounding_pass_rate"]), "Generation quality",
+                    note(r["grounding_pass_rate"],
+                         f"{grd['passed']:,} of {grd['checked']:,} checked answers had nothing removed")),
+        metric_card(percent(r["refusal_rate"]), "Refusal rate", note(r["refusal_rate"], f"{refused:,} refused")),
+        metric_card(format_ms(lat["p50"]), "p50 latency", note(lat["p50"], f"over {lat['n']:,} answered")),
+        metric_card(format_ms(lat["p99"]), "p99 latency", note(lat["p99"], f"over {lat['n']:,} answered")),
+        metric_card(error_rate(c["errors"], c["asked"]), "Error rate",
+                    plural(c["errors"], "error") if c["asked"] else None),
+        metric_card(f"{tok['total']:,}", "Tokens used",
+                    (f"{tok['per_question']:,} per question · " if tok["per_question"] is not None else "")
+                    + f"{tok['counted']:,} of {tok['asked']:,} counted" if tok["asked"] else None),
+        metric_card(f"{c['cache_hits']:,}", "Cache hits",
+                    note(r["cache_hit_rate"], f"{percent(r['cache_hit_rate'])} hit rate")),
+    ]
+    html = "<div class='metric-grid'>" + "".join(cards) + "</div>"
+    return html + (NO_TRAFFIC if not c["asked"] else "")
 
 
-def open_trace(ids, event: gr.SelectData):
-    """The full trace of the selected recent question."""
-    row = event.index[0] if isinstance(event.index, (list, tuple)) else event.index
-    if row is None or row >= len(ids):
-        return "_Select a question to see its trace._"
+def fetch_observability(window_label):
+    """Warning line, cards, recent questions (with their ids), the trace panel's default and the stage table for
+    the chosen window (spec 0007)."""
+    window = WINDOWS[window_label]
     try:
-        t = requests.get(f"{API_BASE}/traces/{ids[row]}", timeout=30).json()
+        m = requests.get(f"{API_BASE}/metrics", params={"window": window}, timeout=30).json()
+        recent = requests.get(f"{API_BASE}/traces", params={"limit": 50, "window": window}, timeout=30).json()
+    except Exception as e:
+        return gr.update(value="", visible=False), f"API error: {e}", [], [], NO_TRACE, []
+    fmt = lambda v: "—" if v is None else f"{v:.0f}"
+    stages = [[STAGE_NAMES.get(k, k), fmt(v["p50"]), fmt(v["p99"]), v["n"]]
+              for k, v in {**m["stages"], **m["voice"]}.items() if v["n"]]
+    rows = [[t["created_at"][:19].replace("T", " "), t["channel"], t["question"], "yes" if t["answered"] else "no"]
+            for t in recent]
+    picks = [[row, t["id"]] for row, t in zip(rows, recent)]
+    warning = failed_writes_line(m.get("failed_writes"))
+    return gr.update(value=warning, visible=bool(warning)), observability_cards(m), rows, picks, NO_TRACE, stages
+
+
+def token_line(prompt, output):
+    """'prompt 1,234 · output 56 · total 1,290'."""
+    return f"prompt {prompt:,} · output {output:,} · total {prompt + output:,}"
+
+
+def selected_trace_id(picks, event):
+    """The id of the selected row, found by its values so a sorted table still opens its own trace."""
+    value = getattr(event, "row_value", None)
+    if value is not None:
+        for row, trace_id in picks:
+            if [str(v) for v in row] == [str(v) for v in value]:
+                return trace_id
+    index = event.index[0] if isinstance(event.index, (list, tuple)) else event.index
+    return picks[index][1] if index is not None and index < len(picks) else None
+
+
+def open_trace(picks, event: gr.SelectData):
+    """The full trace of the selected recent question."""
+    trace_id = selected_trace_id(picks, event)
+    if trace_id is None:
+        return NO_TRACE
+    try:
+        t = requests.get(f"{API_BASE}/traces/{trace_id}", timeout=30).json()
     except Exception as e:
         return f"API error: {e}"
     lines = [f"### {t['question']}", f"{t['created_at'][:19].replace('T', ' ')} · {t['channel']} · path **{t['path']}** · "
@@ -474,6 +547,14 @@ def open_trace(ids, event: gr.SelectData):
     if t.get("first_audio_ms"):
         lines.append(f"Voice: speech recognition {t['stt_ms']:.0f} ms · first audio {t['first_audio_ms']:.0f} ms · "
                      f"spoken total {t['spoken_total_ms']:.0f} ms")
+    if t.get("prompt_tokens") is None:
+        lines += ["", "**Tokens:** not recorded"]
+    else:
+        lines += ["", f"**Tokens:** {token_line(t['prompt_tokens'], t['output_tokens'] or 0)}", ""]
+        for s in t.get("spans", []):
+            if s["layer"] in TOKEN_LAYERS:
+                pair = "—" if s.get("prompt_tokens") is None else token_line(s["prompt_tokens"], s["output_tokens"] or 0)
+                lines.append(f"- {STAGE_NAMES[s['layer']]}: {pair}")
     lines += ["", "**Stages**", "", "| Stage | ms | Details |", "|---|---:|---|"]
     lines += [f"| {s['layer']} | {s['elapsed_ms']:.0f} | {s['details'] or ''} |" for s in t.get("spans", [])]
     if t.get("retrieved"):
@@ -593,21 +674,24 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
 
         # ------------------------------------------------------ Observability
         with gr.Tab("Observability") as obs_tab:
+            gr.Markdown("### Observability\nHow the system behaved in the chosen window, from every question asked.")
             with gr.Row():
                 obs_window = gr.Dropdown(list(WINDOWS), value="Last 24 hours", label="Window", scale=3)
                 obs_refresh = gr.Button("Refresh", scale=1)
+            obs_warning = gr.HTML("", visible=False)
             obs_cards = gr.HTML(NO_TRAFFIC)
-            with gr.Row():
-                with gr.Column(scale=1):
-                    obs_stages = gr.Dataframe(headers=["Stage", "p50 ms", "p95 ms", "n"], interactive=False,
-                                              label="Time per stage", elem_classes=["table-scroll"])
-                with gr.Column(scale=1):
-                    obs_quality = gr.Markdown("_No benchmark run found._")
             obs_ids = gr.State([])
-            obs_recent = gr.Dataframe(headers=["Time (UTC)", "Channel", "Question", "Path", "Total ms"],
-                                      interactive=False, label="Recent questions (select one to see its trace)",
-                                      elem_classes=["table-scroll"])
-            obs_trace = gr.Markdown("_Select a question to see its trace._")
+            with gr.Row():
+                with gr.Column(scale=3, min_width=0):
+                    obs_recent = gr.Dataframe(headers=["Time (UTC)", "Channel", "Question", "Answered"],
+                                              interactive=False, wrap=True, max_height=560,
+                                              column_widths=["22%", "13%", "50%", "15%"],
+                                              label="Recent questions (select one to see its trace)",
+                                              elem_classes=["table-scroll"])
+                with gr.Column(scale=2, min_width=0):
+                    obs_trace = gr.Markdown(NO_TRACE, elem_classes=["trace-panel"])
+            obs_stages = gr.Dataframe(headers=["Stage", "p50 ms", "p99 ms", "n"], interactive=False,
+                                      label="Time per stage", elem_classes=["table-scroll"])
 
     ask_outputs = [history_state, chatbot, query_input, trace_output, sources_output,
                    m_conf, m_grounded, m_retrieval, m_total]
@@ -630,7 +714,7 @@ with gr.Blocks(title="V-RAG", theme=gr.themes.Soft(), css=custom_css) as demo:
 
     delete_picker.change(fn=picker_changed, inputs=[delete_picker], outputs=[delete_btn])
 
-    obs_outputs = [obs_cards, obs_stages, obs_quality, obs_recent, obs_ids, obs_trace]
+    obs_outputs = [obs_warning, obs_cards, obs_recent, obs_ids, obs_trace, obs_stages]
     obs_tab.select(fn=fetch_observability, inputs=[obs_window], outputs=obs_outputs)
     obs_refresh.click(fn=fetch_observability, inputs=[obs_window], outputs=obs_outputs)
     obs_window.change(fn=fetch_observability, inputs=[obs_window], outputs=obs_outputs)

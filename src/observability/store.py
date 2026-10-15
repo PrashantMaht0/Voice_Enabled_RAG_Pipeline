@@ -33,22 +33,29 @@ CREATE TABLE IF NOT EXISTS traces (
     first_audio_ms REAL,
     spoken_total_ms REAL,
     config TEXT NOT NULL DEFAULT '{}',
-    error TEXT
+    error TEXT,
+    prompt_tokens INTEGER,
+    output_tokens INTEGER
 );
 CREATE INDEX IF NOT EXISTS traces_created_at ON traces (created_at);
 CREATE TABLE IF NOT EXISTS spans (
     trace_id INTEGER NOT NULL REFERENCES traces (id) ON DELETE CASCADE,
     layer TEXT NOT NULL,
     elapsed_ms REAL NOT NULL,
-    details TEXT
+    details TEXT,
+    prompt_tokens INTEGER,
+    output_tokens INTEGER
 );
 CREATE INDEX IF NOT EXISTS spans_layer ON spans (layer);
 CREATE INDEX IF NOT EXISTS spans_trace ON spans (trace_id);
 """
 FINISH_FIELDS = ("search_query", "path", "cache_level", "confidence", "answer", "sentences_kept",
                  "sentences_dropped", "dropped_sentences", "grounding_checker", "retrieved", "total_ms",
-                 "first_sentence_ms", "config", "error")
+                 "first_sentence_ms", "config", "error", "prompt_tokens", "output_tokens")
 JSON_FIELDS = ("dropped_sentences", "retrieved", "config")
+# Columns added after the first schema (spec 0007): files made earlier gain them on startup.
+ADDED_COLUMNS = {"traces": ("prompt_tokens INTEGER", "output_tokens INTEGER"),
+                 "spans": ("prompt_tokens INTEGER", "output_tokens INTEGER")}
 
 
 def default_db_path() -> str:
@@ -68,6 +75,7 @@ class TraceStore:
         self.failed_writes = 0
         self._lock = threading.Lock()
         self._ready = False
+        self._upgrade_warned = False
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=5)
@@ -77,8 +85,29 @@ class TraceStore:
             os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
             conn.execute("PRAGMA journal_mode = WAL")
             conn.executescript(SCHEMA)
-            self._ready = True
+            self._ready = self._upgrade(conn)
         return conn
+
+    def _upgrade(self, conn: sqlite3.Connection) -> bool:
+        """Adds the columns a file made by an earlier schema lacks (existing rows keep nulls). Runs under the
+        store lock; a failure is one WARNING and is tried again on the next connection, never raised."""
+        try:
+            for table, columns in ADDED_COLUMNS.items():
+                have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for column in columns:
+                    if column.split()[0] not in have:
+                        try:
+                            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+                        except sqlite3.OperationalError as e:
+                            if "duplicate column name" not in str(e):
+                                raise
+            conn.commit()
+            return True
+        except Exception as e:
+            if not self._upgrade_warned:
+                print(f"[Traces] WARNING: could not upgrade the trace store ({e}); will try again.")
+                self._upgrade_warned = True
+            return False
 
     def _write(self, action: str, fn):
         """Runs one write; a failure is a WARNING and a counter, never an exception."""
@@ -116,9 +145,10 @@ class TraceStore:
             if values:
                 c.execute(f"UPDATE traces SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?",
                           (*values.values(), trace_id))
-            c.executemany("INSERT INTO spans (trace_id, layer, elapsed_ms, details) VALUES (?, ?, ?, ?)",
-                          [(trace_id, s["layer"], float(s.get("elapsed_ms") or 0.0), s.get("details"))
-                           for s in spans])
+            c.executemany("INSERT INTO spans (trace_id, layer, elapsed_ms, details, prompt_tokens, output_tokens) "
+                          "VALUES (?, ?, ?, ?, ?, ?)",
+                          [(trace_id, s["layer"], float(s.get("elapsed_ms") or 0.0), s.get("details"),
+                            s.get("prompt_tokens"), s.get("output_tokens")) for s in spans])
             c.execute("DELETE FROM traces WHERE id NOT IN (SELECT id FROM traces ORDER BY id DESC LIMIT ?)",
                       (self.max_traces,))
             return trace_id
@@ -144,10 +174,13 @@ class TraceStore:
             finally:
                 conn.close()
 
-    def recent(self, limit: int = 50) -> List[Dict]:
-        """The newest finished traces (summary fields only), newest first."""
-        rows = self.query("SELECT id, created_at, channel, question, path, total_ms FROM traces "
-                          "WHERE path != 'in_progress' ORDER BY id DESC LIMIT ?", (limit,))
+    def recent(self, limit: int = 50, since: Optional[str] = None) -> List[Dict]:
+        """The newest finished traces (summary fields, plus `answer` for the answered rule), newest first; only
+        those created at or after `since` when given."""
+        rows = self.query("SELECT id, created_at, channel, question, path, total_ms, answer, prompt_tokens, "
+                          "output_tokens FROM traces WHERE path != 'in_progress'"
+                          + (" AND created_at >= ?" if since else "") + " ORDER BY id DESC LIMIT ?",
+                          (since, limit) if since else (limit,))
         return [dict(r) for r in rows]
 
     def get(self, trace_id: int) -> Optional[Dict]:
@@ -160,5 +193,6 @@ class TraceStore:
             if trace.get(key):
                 trace[key] = json.loads(trace[key])
         trace["spans"] = [dict(r) for r in self.query(
-            "SELECT layer, elapsed_ms, details FROM spans WHERE trace_id = ? ORDER BY rowid", (trace_id,))]
+            "SELECT layer, elapsed_ms, details, prompt_tokens, output_tokens FROM spans WHERE trace_id = ? "
+            "ORDER BY rowid", (trace_id,))]
         return trace

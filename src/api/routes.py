@@ -17,7 +17,7 @@ from qdrant_client import models
 from src.ingestion import figures, tables
 from src.ingestion.chunking import DocumentChunker
 from src.ingestion.loader import DocumentLoader
-from src.llm.llm_client import LocalLLMClient
+from src.llm.llm_client import LocalLLMClient, generated_tokens
 from src.observability.store import TraceStore
 from src.retrieval.query_rewriter import QueryRewriter
 from src.retrieval.retriever import HybridRetriever
@@ -173,7 +173,7 @@ def resolve_search_query(request: QueryRequest, tracer=None) -> str:
     if history:
         if tracer:
             tracer.start_span("rewrite")
-        search_query = get_rewriter().resolve_query(search_query, history)
+        search_query = get_rewriter().resolve_query(search_query, history, tracer=tracer)
         if tracer:
             tracer.end_span("rewrite", f"Standalone query — {search_query!r}")
 
@@ -312,11 +312,12 @@ def retrieve(search_query: str, tracer) -> tuple:
     return chunks, score, []
 
 
-def generate_tokens(search_query: str, chunks: List[str]):
-    """The answer model's tokens; a client without streaming yields its whole answer at once."""
+def generate_tokens(search_query: str, chunks: List[str], tracer=None):
+    """The answer model's tokens (counts to the request's tracer); a client without streaming yields its whole
+    answer at once and reports no counts."""
     llm = get_llm()
     if hasattr(llm, "stream_generate"):
-        yield from llm.stream_generate(search_query, chunks)
+        yield from llm.stream_generate(search_query, chunks, tracer=tracer)
     else:
         yield llm.generate(search_query, chunks)
 
@@ -421,9 +422,9 @@ def answer_events(request: QueryRequest):
             sentences = [answer]
             yield sentence(0, answer)
         else:
-            judge = grounding.SentenceJudge(chunks)
+            judge = grounding.SentenceJudge(chunks, tracer=tracer)
             buffer, index, gen_started = grounding.SentenceBuffer(), 0, time.perf_counter()
-            for token in generate_tokens(search_query, chunks):
+            for token in generate_tokens(search_query, chunks, tracer):
                 for piece in buffer.feed(token):
                     for approved in judge.judge(piece):
                         yield sentence(index, approved)
@@ -437,8 +438,8 @@ def answer_events(request: QueryRequest):
                 index += 1
             result = judge.result
             gen_ms = (time.perf_counter() - gen_started - result.seconds) * 1000
-            tracer.add_static_span("generation", f"LLM call — {getattr(get_llm(), 'last_eval_count', 0)} tokens "
-                                                 f"generated", gen_ms)
+            tracer.add_static_span("generation", f"LLM call — {generated_tokens(tracer)} tokens generated",
+                                   gen_ms)
             tracer.add_static_span("grounding", f"{result.checker or 'unchecked'}: {result.checked} checked, "
                                                 f"{len(result.dropped)} dropped"
                                                 + (f", {result.invalid} invalid replies kept" if result.invalid else "")
@@ -484,14 +485,15 @@ def answer_events(request: QueryRequest):
     finally:
         tracer.print_trace()
         dropped = record.get("dropped") or []
-        traces.finish(trace_id, spans=tracer.as_list(), path=record["path"],
+        prompt_tokens, output_tokens = tracer.token_totals()
+        traces.finish(trace_id, spans=tracer.as_store_list(), path=record["path"],
                       search_query=record["search_query"], cache_level=record.get("cache_level"),
                       confidence=record.get("confidence"), answer=record.get("answer"),
                       sentences_kept=record.get("kept"), sentences_dropped=len(dropped) if record.get("answer") else None,
                       dropped_sentences=dropped or None, grounding_checker=record.get("grounding_checker"),
                       retrieved=record.get("retrieved"), total_ms=elapsed(),
                       first_sentence_ms=record.get("first_sentence_ms"), config=trace_config(),
-                      error=record.get("error"))
+                      error=record.get("error"), prompt_tokens=prompt_tokens, output_tokens=output_tokens)
 
 
 @router.post("/query")
@@ -552,9 +554,14 @@ def get_metrics(window: Literal["1h", "24h", "7d", "all"] = "24h"):
 
 
 @router.get("/traces")
-def list_traces(limit: int = Query(50, ge=1, le=200)):
-    """The most recent finished traces, newest first (summary fields only)."""
-    return get_traces().recent(limit)
+def list_traces(limit: int = Query(50, ge=1, le=200), window: Literal["1h", "24h", "7d", "all"] = "all"):
+    """The most recent finished traces in the window, newest first: summary fields, tokens and whether each
+    counts as answered (spec 0007)."""
+    from src.observability import metrics
+    items = get_traces().recent(limit, since=metrics.since(window))
+    for item in items:
+        item["answered"] = metrics.is_answered(item["path"], item.pop("answer"))
+    return items
 
 
 @router.get("/traces/{trace_id}")

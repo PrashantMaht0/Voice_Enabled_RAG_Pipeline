@@ -191,6 +191,73 @@ def test_judge_reads_yes_no_and_treats_anything_else_as_invalid(reply, expected)
     assert judge_with(reply).supported("claim", [f"{TAG}\nbody"]) is expected
 
 
+# --- judge tokens (spec 0007, covers: AC-3) ---
+
+def counting_judge(reply='{"supported": "yes"}', prompt=300, output=5, raises=None):
+    """A judge whose fake Ollama reply carries token counts, or raises."""
+    checker = JudgeChecker.__new__(JudgeChecker)
+    checker.model_name, checker.name = "fake", "judge:fake"
+
+    def chat(**kw):
+        if raises:
+            raise raises
+        return SimpleNamespace(message=SimpleNamespace(content=reply), prompt_eval_count=prompt, eval_count=output)
+    checker.client = SimpleNamespace(chat=chat)
+    return checker
+
+
+@pytest.mark.parametrize("reply, verdict", [('{"supported": "yes"}', True), ('{"supported": "no"}', False),
+                                            ("not json", None)])
+def test_the_judge_returns_its_counts_with_every_verdict_even_an_invalid_one(reply, verdict):
+    assert counting_judge(reply).ask_with_usage("context", "claim") == (verdict, 300, 5)
+
+
+def test_ask_and_supported_keep_their_plain_verdict_return():
+    checker = counting_judge('{"supported": "no"}')
+    assert checker.ask("context", "claim") is False and checker.supported("claim", [f"{TAG}\nbody"]) is False
+
+
+def test_with_a_tracer_every_judge_call_adds_to_the_grounding_layer():
+    from src.utils.metrics import PipelineTracer
+    tracer = PipelineTracer()
+    judge = SentenceJudge([f"{TAG}\nbody"], counting_judge(), tracer=tracer)
+    judge.judge("The warranty lasts two years.")
+    judge.judge("It covers parts and labour.")
+    assert judge.result.checked == 2 and tracer.layer_tokens("grounding") == (600, 10)
+
+
+def test_short_sentences_are_not_checked_so_they_add_no_tokens():
+    from src.utils.metrics import PipelineTracer
+    tracer = PipelineTracer()
+    judge = SentenceJudge([f"{TAG}\nbody"], counting_judge(), tracer=tracer)
+    judge.judge("Yes.")
+    judge.finish()
+    assert tracer.layer_tokens("grounding") is None
+
+
+def test_a_judge_call_that_raises_fails_open_and_adds_no_tokens():
+    from src.utils.metrics import PipelineTracer
+    tracer = PipelineTracer()
+    judge = SentenceJudge([f"{TAG}\nbody"], counting_judge(raises=TimeoutError("slow")), tracer=tracer)
+    assert judge.judge("The warranty lasts two years.") == ["The warranty lasts two years."]
+    assert judge.result.unchecked_reason and tracer.layer_tokens("grounding") is None
+
+
+def test_a_checker_without_counts_is_asked_as_before_even_with_a_tracer():
+    from src.utils.metrics import PipelineTracer
+    tracer, checker = PipelineTracer(), Rejects("labour")
+    judge = SentenceJudge(["chunk"], checker, tracer=tracer)
+    judge.judge("It covers parts and labour.")
+    assert checker.calls == ["It covers parts and labour."] and tracer.layer_tokens("grounding") is None
+
+
+def test_without_a_tracer_the_judge_uses_its_plain_verdict():
+    checker = counting_judge('{"supported": "no"}')
+    judge = SentenceJudge([f"{TAG}\nbody"], checker)
+    judge.judge("The warranty lasts two years.")
+    assert judge.result.dropped == ["The warranty lasts two years."]
+
+
 # --- the checker at startup (covers: AC-6) ---
 
 def test_a_checker_that_cannot_load_is_one_error_and_falls_back_to_none(monkeypatch, capsys):

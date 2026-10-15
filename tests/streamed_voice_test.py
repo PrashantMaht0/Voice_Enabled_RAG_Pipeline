@@ -30,7 +30,7 @@ class FakeChecker:
 def stream(monkeypatch):
     """Runs answer_events on a fixed generation; returns its events in a short readable form."""
     def run(text, reject=(), fail_after=None):
-        def tokens(query, chunks):
+        def tokens(query, chunks, tracer=None):
             for i, word in enumerate(text.split(" ")):
                 if fail_after is not None and i == fail_after:
                     raise RuntimeError("model went away")

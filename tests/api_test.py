@@ -34,7 +34,7 @@ class _FakeRewriter:
     def __init__(self):
         self.seen_history = None
 
-    def resolve_query(self, query, history):
+    def resolve_query(self, query, history, tracer=None):
         self.seen_history = history
         return "Scaling Azure App Service Web App"
 
