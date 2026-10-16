@@ -54,6 +54,7 @@ sys.path.insert(0, ROOT)
 import numpy as np                                     # noqa: E402
 from src.pipeline.settings import Settings              # noqa: E402
 from src.utils.config import get                        # noqa: E402
+from src.verification import grounding                  # noqa: E402
 
 
 def sources() -> list:
@@ -98,7 +99,10 @@ def browser_config() -> dict:
     settings.confidence_threshold = float(get("demo.confidence_threshold"))
     settings.checker = get("demo.grounding_checker")
     models = {key: get(f"demo.{key}") for key in ("embedder", "reranker", "nli", "whisper", "kokoro", "answer_models")}
-    return {**settings.as_dict(), "embedder_id": embedder_id(), "models": models}
+    models["nli"] = {**models["nli"], "max_tokens": grounding.NLI_MAX_TOKENS,          # the token window rule
+                     "premise_tokens": grounding.NLI_PREMISE_TOKENS, "overlap_tokens": grounding.NLI_OVERLAP_TOKENS, "max_sentence_tokens": grounding.NLI_MAX_SENTENCE_TOKENS}
+    return {**settings.as_dict(), "embedder_id": embedder_id(), "models": models,
+            "space": get("demo.space"), "uploads": get("demo.uploads"), "judge_model": get("demo.judge_model")}
 
 
 def build_index():

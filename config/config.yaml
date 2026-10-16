@@ -123,12 +123,16 @@ health:
 # retrieval, llm, grounding and api settings above, into demo/public/config.json.
 demo:
   confidence_threshold: 0.84       # the browser's fp32 cross encoder gate; matches flashrank at 0.65 on all 67 golden questions
-  grounding_checker: "nli:Xenova/nli-deberta-v3-small"
+  grounding_checker: "judge:Llama-3.2-1B-Instruct (WebLLM)"   # as the server's default (grounding.checker: judge); NLI dropped half of correct text answers (2026-10-16)
+  judge_model: "1b"                # the answer_models entry the judge runs (its own engine, pinned revision)
   embedder: {id: "Xenova/bge-small-en-v1.5", revision: "ea104dacec62", dtype: "fp32"}
   reranker: {id: "Xenova/ms-marco-MiniLM-L-12-v2", revision: "42a4a787e304", dtype: "fp32", max_tokens: 512}
   nli: {id: "Xenova/nli-deberta-v3-small", revision: "6bc2a55c7c0f", dtype_f16: "fp16", dtype: "fp32"}
-  whisper: {id: "onnx-community/whisper-base.en", revision: "51eefc0af78b", dtype_f16: "fp16", dtype: "fp32"}
-  kokoro: {id: "onnx-community/Kokoro-82M-v1.0-ONNX", revision: "1939ad2a8e41", dtype: "fp16", voice: "af_bella"}
+  whisper: {id: "onnx-community/whisper-base.en", revision: "51eefc0af78b", dtype_f16: "fp16", dtype: "fp32", decoder_dtype: "fp32"}   # the fp16 merged decoder is rejected by onnxruntime
+  kokoro: {id: "onnx-community/Kokoro-82M-v1.0-ONNX", revision: "1939ad2a8e41", dtype: "fp32", voice: "af_bella"}   # fp16 on WebGPU speaks garbled audio (2026-10-16)
   answer_models:                   # WebLLM ids; f16 needs the shader-f16 GPU feature; download_mb from each ndarray-cache.json
-    3b: {f16: "Llama-3.2-3B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-3B-Instruct-q4f32_1-MLC", vram_mb_f16: 2264, vram_mb_f32: 2952, download_mb: 1807}
-    1b: {f16: "Llama-3.2-1B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-1B-Instruct-q4f32_1-MLC", vram_mb_f16: 879, vram_mb_f32: 1129, download_mb: 695}
+    # revision_*: the Hub commit each build downloads from (WebLLM otherwise reads main)
+    3b: {f16: "Llama-3.2-3B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-3B-Instruct-q4f32_1-MLC", revision_f16: "1e80abf71e3d", revision_f32: "6083cfdaaf08", vram_mb_f16: 2264, vram_mb_f32: 2952, download_mb: 1807}
+    1b: {f16: "Llama-3.2-1B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-1B-Instruct-q4f32_1-MLC", revision_f16: "2a37b0a5ecb6", revision_f32: "a949835e0f9a", vram_mb_f16: 879, vram_mb_f32: 1129, download_mb: 695}
+  space: "Prashant-Mahto/vrag-pdf-reader"   # the PDF reading Space (space/app.py) the page sends uploads to
+  uploads: {per_day: 3, max_mb: 10, max_pages: 5, max_chunks: 2000, types: [".pdf", ".md", ".txt"]}   # AC-7; the Space enforces its own copies

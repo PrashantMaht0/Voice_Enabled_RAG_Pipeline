@@ -16,7 +16,7 @@ import requests
 
 from src.utils.audio_utils import float32_to_int16, int16_to_float32, resample_audio
 from src.utils.config import get
-from src.utils.text_sanitizer import CITATION_TAG, SOURCE_HEADER, parse_tag
+from src.utils.text_sanitizer import CITATION_TAG, SOURCE_HEADER, is_filler_transcript, parse_tag
 from src.voice.streaming import SentenceSpeaker
 from src.voice.stt import WhisperSTT
 from src.voice.tts import KokoroTTS
@@ -91,16 +91,12 @@ custom_css = """
 """
 
 NOTHING_HEARD = "_I didn't catch that, please try again._"
-# What Whisper writes for silence or a cough; never worth a search
-FILLER_TRANSCRIPTS = {"", "you", "thank you", "thanks for watching", "bye"}
 
 
 def heard_nothing(transcript: str, no_speech_probs) -> bool:
     """True for a recording that is silence (every segment above the threshold) or only filler."""
     threshold = float(get("voice.no_speech_threshold", 0.6))
-    words = re.sub(r"[^\w\s]", "", (transcript or "").lower()).strip()
-    words = re.sub(r"\s+", " ", words)
-    if words in FILLER_TRANSCRIPTS:
+    if is_filler_transcript(transcript):
         return True
     return bool(no_speech_probs) and all(p > threshold for p in no_speech_probs)
 

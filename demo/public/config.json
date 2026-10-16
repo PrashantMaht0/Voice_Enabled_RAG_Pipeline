@@ -9,7 +9,7 @@
  "max_tokens": 256,
  "answer_style": "full",
  "context_window": 4096,
- "checker": "nli:Xenova/nli-deberta-v3-small",
+ "checker": "judge:Llama-3.2-1B-Instruct (WebLLM)",
  "grounding_threshold": 0.5,
  "max_query_chars": 1000,
  "max_history_turns": 6,
@@ -31,24 +31,31 @@
    "id": "Xenova/nli-deberta-v3-small",
    "revision": "6bc2a55c7c0f",
    "dtype_f16": "fp16",
-   "dtype": "fp32"
+   "dtype": "fp32",
+   "max_tokens": 512,
+   "premise_tokens": 64,
+   "overlap_tokens": 24,
+   "max_sentence_tokens": 256
   },
   "whisper": {
    "id": "onnx-community/whisper-base.en",
    "revision": "51eefc0af78b",
    "dtype_f16": "fp16",
-   "dtype": "fp32"
+   "dtype": "fp32",
+   "decoder_dtype": "fp32"
   },
   "kokoro": {
    "id": "onnx-community/Kokoro-82M-v1.0-ONNX",
    "revision": "1939ad2a8e41",
-   "dtype": "fp16",
+   "dtype": "fp32",
    "voice": "af_bella"
   },
   "answer_models": {
    "3b": {
     "f16": "Llama-3.2-3B-Instruct-q4f16_1-MLC",
     "f32": "Llama-3.2-3B-Instruct-q4f32_1-MLC",
+    "revision_f16": "1e80abf71e3d",
+    "revision_f32": "6083cfdaaf08",
     "vram_mb_f16": 2264,
     "vram_mb_f32": 2952,
     "download_mb": 1807
@@ -56,10 +63,25 @@
    "1b": {
     "f16": "Llama-3.2-1B-Instruct-q4f16_1-MLC",
     "f32": "Llama-3.2-1B-Instruct-q4f32_1-MLC",
+    "revision_f16": "2a37b0a5ecb6",
+    "revision_f32": "a949835e0f9a",
     "vram_mb_f16": 879,
     "vram_mb_f32": 1129,
     "download_mb": 695
    }
   }
- }
+ },
+ "space": "Prashant-Mahto/vrag-pdf-reader",
+ "uploads": {
+  "per_day": 3,
+  "max_mb": 10,
+  "max_pages": 5,
+  "max_chunks": 2000,
+  "types": [
+   ".pdf",
+   ".md",
+   ".txt"
+  ]
+ },
+ "judge_model": "1b"
 }

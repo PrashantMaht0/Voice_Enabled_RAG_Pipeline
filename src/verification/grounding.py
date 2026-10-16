@@ -140,11 +140,33 @@ class PassThrough:
 
 
 NLI_WINDOW_WORDS, NLI_STRIDE_WORDS = 350, 100       # a long chunk is scored in overlapping windows
+# The NLI model is scored on short premises: each word window is cut into overlapping 64 token windows (token_windows),
+# on the server and in the browser alike. nli-deberta-v3-small was trained on sentence length premises and misses a
+# supporting sentence inside a long window (2026-10-16: 0.003 against a 461 token window, 0.97 against the 80 words
+# around the same phrase). On the grounding benchmark's 44 saved answers at threshold 0.5, whole windows refused 31
+# (25 false alarms, 8 of 10 unfaithful caught); 64 token premises refused 12 (10 false alarms, 4 caught) and ran
+# faster; 128 and 48 tokens did worse. The model's own limit is 512 tokens, so the sentence is capped at 256.
+NLI_MAX_TOKENS, NLI_PREMISE_TOKENS, NLI_OVERLAP_TOKENS, NLI_MAX_SENTENCE_TOKENS = 512, 64, 24, 256
 JUDGE_PROMPT = ("Context:\n{context}\n\nStatement: {sentence}\n\n"
                 "Is the statement fully supported by the context? Answer yes or no.")
 JUDGE_SCHEMA = {"type": "object", "properties": {"supported": {"type": "string", "enum": ["yes", "no"]}},
                 "required": ["supported"]}
 RETRY_AFTER_S = 60
+
+
+def judge_messages(context: str, sentence: str) -> List[dict]:
+    """The judge's one user message, the same for the server's Ollama judge and the browser demo's WebLLM judge."""
+    return [{"role": "user", "content": JUDGE_PROMPT.format(context=context, sentence=sentence)}]
+
+
+def judge_verdict(reply: str) -> Optional[bool]:
+    """The judge's JSON reply as yes (True), no (False), or None for a reply that is neither."""
+    import json
+    try:
+        answer = json.loads(reply or "").get("supported")
+    except (ValueError, AttributeError):
+        return None
+    return {"yes": True, "no": False}.get(answer)
 
 
 def chunk_body(chunk: str) -> str:
@@ -161,6 +183,18 @@ def windows(text: str, size: int = NLI_WINDOW_WORDS, stride: int = NLI_STRIDE_WO
     return [" ".join(words[i:i + size]) for i in range(0, max(1, len(words) - stride), step)]
 
 
+def token_windows(premise: List[int], sentence: List[int], cls: int, sep: int, max_tokens: int = NLI_MAX_TOKENS,
+                  premise_tokens: int = NLI_PREMISE_TOKENS, overlap: int = NLI_OVERLAP_TOKENS,
+                  max_sentence: int = NLI_MAX_SENTENCE_TOKENS) -> List[List[int]]:
+    """Model inputs `[CLS] premise part [SEP] sentence [SEP]`: the whole premise when it has at most premise_tokens,
+    else overlapping parts of that size that together cover all of it, each input within max_tokens. The browser's
+    worker follows this same rule, with these numbers from config.json."""
+    hypothesis = sentence[:max_sentence]
+    budget = min(premise_tokens, max_tokens - 3 - len(hypothesis))
+    starts = [0] if len(premise) <= budget else range(0, len(premise) - overlap, budget - overlap)
+    return [[cls, *premise[start:start + budget], sep, *hypothesis, sep] for start in starts]
+
+
 class NLIChecker:
     """An entailment model: supported when some window of some chunk entails the sentence."""
     def __init__(self, model: str = None, revision: str = None, threshold: float = None):
@@ -175,16 +209,41 @@ class NLIChecker:
         self._lock = threading.Lock()
 
     def entailment_scores(self, sentence: str, chunks: List[str]) -> List[float]:
-        """The entailment probability of the sentence against every window of every chunk."""
+        """The entailment probability of the sentence against every token window (token_windows) of every word
+        window of every chunk (premise window, hypothesis sentence)."""
         import numpy as np
-        pairs = [(w, sentence) for c in chunks for w in windows(chunk_body(c))]
-        if not pairs:
+        tokenizer = self.model.tokenizer
+        hypothesis = tokenizer.encode(sentence, add_special_tokens=False)
+        rows = [ids for c in chunks for w in windows(chunk_body(c))
+                for ids in token_windows(tokenizer.encode(w, add_special_tokens=False), hypothesis,
+                                         tokenizer.cls_token_id, tokenizer.sep_token_id)]
+        if not rows:
             return []
         with self._lock:                                  # requests run in parallel threads
-            logits = np.asarray(self.model.predict(pairs, apply_softmax=False))
+            logits = np.asarray(self._logits(rows))
         logits = logits - logits.max(axis=1, keepdims=True)
         probs = np.exp(logits) / np.exp(logits).sum(axis=1, keepdims=True)
         return probs[:, self.entailment].tolist()
+
+    def _logits(self, rows: List[List[int]], batch: int = 16):
+        """The model's logits for ready made input ids, padded per batch."""
+        import numpy as np
+        import torch
+        model = self.model.model
+        device = next(model.parameters()).device
+        pad = self.model.tokenizer.pad_token_id or 0
+        out = []
+        for i in range(0, len(rows), batch):
+            part = rows[i:i + batch]
+            width = max(len(r) for r in part)
+            ids = torch.full((len(part), width), pad, dtype=torch.long)
+            mask = torch.zeros((len(part), width), dtype=torch.long)
+            for k, r in enumerate(part):
+                ids[k, :len(r)] = torch.tensor(r)
+                mask[k, :len(r)] = 1
+            with torch.no_grad():
+                out.append(model(input_ids=ids.to(device), attention_mask=mask.to(device)).logits.float().cpu().numpy())
+        return np.vstack(out)
 
     def supported(self, sentence: str, chunks: List[str]) -> Optional[bool]:
         """True when some window entails the sentence at or above the threshold."""
@@ -211,17 +270,11 @@ class JudgeChecker:
     def ask_with_usage(self, context: str, sentence: str) -> Tuple[Optional[bool], int, int]:
         """The verdict plus the call's prompt and output tokens. The checker is shared by every request, so the
         counts are returned, never kept here (spec 0007)."""
-        import json
         response = self.client.chat(
-            model=self.model_name,
-            messages=[{"role": "user", "content": JUDGE_PROMPT.format(context=context, sentence=sentence)}],
+            model=self.model_name, messages=judge_messages(context, sentence),
             format=JUDGE_SCHEMA, options={"temperature": 0, "num_predict": 20, "num_ctx": 4096})
         prompt, output = token_counts(response)
-        try:
-            answer = json.loads(response.message.content).get("supported")
-        except (ValueError, AttributeError):
-            return None, prompt, output
-        return {"yes": True, "no": False}.get(answer), prompt, output
+        return judge_verdict(getattr(response.message, "content", None)), prompt, output
 
     def context(self, chunks: List[str]) -> str:
         """Every retrieved chunk's body, as the judge sees it."""
@@ -320,12 +373,14 @@ class JudgeSteps:
         self._evidence = None
 
     def check_effect(self, sentence: str) -> dict:
-        """What a checker needs: the sentence, every window of every chunk (NLI) and the whole context (judge)."""
+        """What a checker needs: the sentence, every window of every chunk (NLI), the whole context, and the
+        judge's ready made messages and reply schema (so a browser judge asks exactly what the server asks)."""
         if self._evidence is None:
             bodies = [chunk_body(c) for c in self.chunks]
             self._evidence = ([w for b in bodies for w in windows(b)], "\n\n".join(bodies))
         return {"effect": "CheckSentence", "sentence": sentence, "windows": self._evidence[0],
-                "context": self._evidence[1]}
+                "context": self._evidence[1],
+                "judge": {"messages": judge_messages(self._evidence[1], sentence), "schema": JUDGE_SCHEMA}}
 
     def _check(self, sentence: str):
         """One sentence's verdict; a checker error or timeout fails open for the rest of this answer."""
@@ -338,8 +393,12 @@ class JudgeSteps:
             ok = True
         else:
             self.result.checked += 1
-            ok = (bool(reply["scores"]) and max(reply["scores"]) >= self.threshold) if "scores" in reply \
-                else reply.get("verdict")
+            if "scores" in reply:
+                ok = bool(reply["scores"]) and max(reply["scores"]) >= self.threshold
+            elif "reply" in reply:             # a judge's raw JSON reply (the browser demo)
+                ok = judge_verdict(reply["reply"])
+            else:
+                ok = reply.get("verdict")
             if ok is None:                     # an invalid judge reply keeps the sentence
                 self.result.invalid += 1
                 ok = True

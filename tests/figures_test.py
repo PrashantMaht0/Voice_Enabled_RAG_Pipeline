@@ -307,6 +307,28 @@ def test_a_figure_body_is_marked_generated_and_lists_every_field():
                                  "Summary: Units grew every year."]
 
 
+def test_a_series_that_repeats_one_value_is_left_out_of_the_chunk():
+    """A copied series (the latest value repeated across a time series) would outweigh the true figures for the
+    answer model; a short or varying series stays. covers: AC-5"""
+    figure = dict(CHART, series=[{"name": "Female", "values": ["$55,240"] * 8},
+                                 {"name": "Ratio", "values": ["60%", "60%", "65%"]},
+                                 {"name": "Latest", "values": ["$42,110", "$42,110"]}])
+    lines = figures.figure_body("Figure 6.", figure).splitlines()
+
+    assert "Ratio: 60%, 60%, 65%" in lines and "Latest: $42,110, $42,110" in lines
+    assert not any(line.startswith("Female:") for line in lines)
+
+
+def test_changing_how_reads_are_written_changes_the_index_fingerprint_but_not_the_read_cache(monkeypatch):
+    """Cached vision reads are reused; only the chunk text is rebuilt. covers: AC-5"""
+    monkeypatch.setattr(figures, "effective_parser", lambda: "qwen2.5vl:7b")
+    before = figures.figure_fingerprint()
+    monkeypatch.setattr(figures, "FIGURE_BODY_VERSION", figures.FIGURE_BODY_VERSION + 1)
+
+    assert figures.figure_fingerprint() != before
+    assert figures.FIGURE_PROMPT_VERSION == 2
+
+
 def test_a_failed_read_keeps_the_caption_only():
     assert figures.figure_body(None, None) == ("Figure description (generated)\nCaption: none\n"
                                                "Figure description unavailable")
@@ -537,7 +559,7 @@ def test_the_figure_fingerprint_follows_every_setting(monkeypatch):
     settings = {}
     monkeypatch.setattr(figures, "get", lambda key, default=None: settings.get(key, default))
     base = figures.figure_fingerprint("qwen2.5vl:7b")
-    assert base == f"|fig:qwen2.5vl:7b|800|0.08|0.3-3.5|4x8|{figures.FIGURE_PROMPT_VERSION}"
+    assert base == f"|fig:qwen2.5vl:7b|800|0.08|0.3-3.5|4x8|{figures.FIGURE_PROMPT_VERSION}|body{figures.FIGURE_BODY_VERSION}"
     assert figures.figure_fingerprint("none") == ""
     for key, value in (("ingestion.figure_image_px", 640), ("ingestion.figure_min_area", 0.1),
                        ("ingestion.figure_series_cap", 3)):

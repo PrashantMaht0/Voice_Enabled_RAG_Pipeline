@@ -6,6 +6,54 @@ it came from.
 
 Everything runs on your machine. No cloud APIs, no vendor keys, no data leaving the laptop.
 
+## Live demo
+
+**[Try it in your browser](https://prashantmaht0.github.io/Voice_Enabled_RAG_Pipeline/)**: the same pipeline,
+running on your own GPU through WebGPU. Search, the answer model (Llama 3.2 3B or 1B), the grounding check,
+speech recognition and the voice all run in the tab, and the rules that decide an answer (fusion, the
+confidence gate, the prompt, citations, grounding) are this repository's own Python, run in the browser by
+Pyodide. Nothing you ask or say leaves your device. Four openly licensed sample documents are indexed ahead of
+time, so table and chart questions work straight away, and you can add your own.
+
+What to expect, honestly:
+
+- **WebGPU browsers only.** Current Chrome or Edge, Safari 26, or a recent Firefox on Windows or Apple silicon.
+  Other browsers see the six suggested questions with answers precomputed by the local setup.
+- **A large first download.** Pressing Load fetches about 1.0 GB with the 1B model or 2.8 GB with the 3B
+  (the answer model is 0.7 or 1.8 GB, the embedder and reranker add about 0.27 GB, and the grounding judge is
+  the 1B model, 0.7 GB, shared when 1B also answers). The
+  first mic press adds speech recognition (0.25 GB) and the first spoken answer the voice (0.33 GB). Later
+  visits load from your browser cache, if your browser lets the site keep that much.
+- **Uploads are limited.** 3 a day per browser, each a PDF of up to 5 pages or a Markdown or text file,
+  up to 10 MB. PDFs are read on a free Hugging Face Space with shared GPU time: reading takes about 9 seconds
+  of GPU a page, and Hugging Face gives an anonymous visitor about 2 minutes a day, so one 5 page PDF uses most
+  of it. Markdown and text files use no GPU.
+- **Uploads go to Hugging Face.** The [PDF reader Space](https://huggingface.co/spaces/Prashant-Mahto/vrag-pdf-reader)
+  runs this repository's own ingestion code, deletes each file right after reading and logs only its name,
+  page count and timing. Hugging Face's own request logs are outside this project's control. The chunks come
+  back and stay in your browser.
+- **A smaller chart reader for uploads.** Charts in your PDFs are read by Qwen2.5 VL 3B; the sample documents
+  were read by the 7B model behind the numbers below (on the chart benchmark, 11 of 31 right against 9 for 3B).
+- **The same grounding check, a different build.** The demo checks each sentence with the same 1B judge and the
+  same question as the local default, in its own WebLLM engine. It adds one to four seconds per sentence in the
+  browser, and being a different build of the model it occasionally disagrees with the local judge. There is a
+  switch to turn it off. (An NLI checker was tried first; it removed correct sentences from half of plain text
+  answers.)
+- **Cold starts.** The PDF reader sleeps after a period without visitors; the first upload then waits while it
+  wakes (the page says so). A restart took about a minute when measured.
+- **The table model's licence.** Tables are read by a fine tuned LayoutLMv3 whose weights are licensed
+  CC BY-NC-SA 4.0, which allows non commercial use only.
+- **Not identical to the local pipeline.** The browser uses quantized models, its own keyword search and its
+  own gate threshold (0.84 on its reranker, which matches the local 0.65 on all 67 golden questions), so an
+  answer can differ from the local one. The answer model is the same Llama 3.2 3B but a different build (WebLLM's
+  4 bit MLC weights instead of Ollama's Q4_K_M), and it reads the prompt more slowly on WebGPU (about 280 tokens a
+  second here), so the first sentence of a typed answer comes several seconds later. On questions where the
+  documents hold two close figures (for example earnings of all workers against full-time workers), the browser
+  build sometimes refuses or picks the other figure where the local one answers.
+
+The demo lives in [`demo/`](demo/) and the PDF reader in [`space/`](space/); both deploy from `main` with GitHub
+Actions.
+
 ---
 
 ## The S-Y-N-C-H-R-O-N-I-C Framework
@@ -68,10 +116,18 @@ were cleaned of formatting, so they show chunk citations and the sample reads a 
 Voice_Enabled_RAG_Pipeline/
 ├── .github/
 │   └── workflows/
-│       └── rag_eval_ci.yml          # CI: fast tests on every PR, Ragas gate on demand
+│       ├── rag_eval_ci.yml          # CI: fast tests on every PR, Ragas gate on demand
+│       ├── demo_pages.yml           # Builds the live demo and publishes it to GitHub Pages
+│       └── space_deploy.yml         # Syncs the PDF reader Space on Hugging Face
 ├── assets/                          # Screenshots, the architecture diagram, an audio sample
 ├── config/
 │   └── config.yaml                  # Every tunable setting: models, thresholds, paths, cache
+├── demo/                            # The live demo: a static site (Vite, TypeScript, WebGPU, Pyodide)
+│   ├── src/                         # The page, the browser driver of the shared core, model workers
+│   ├── py/bridge.py                 # The Pyodide side: the demo index and the question in progress
+│   ├── sample/                      # The sample documents' sources, licences and suggested questions
+│   └── scripts/                     # Builds the sample index and bundles the shared Python
+├── space/                           # The PDF reader: a Gradio ZeroGPU Space running src/ingestion
 ├── data/
 │   ├── raw/                         # Your source documents (PDF, TXT, MD)
 │   └── eval/
@@ -331,6 +387,11 @@ unsupported and would have refused most correct answers. Measured on 2026-10-10 
 run is `data/benchmarks/grounding-20261010-184707.json`. To run it yourself after a context size run:
 `./dev-env/bin/python -m src.eval.grounding_benchmark run`.
 
+Since 2026-10-16 the NLI model reads each passage in short overlapping pieces of 64 tokens, which it handles much
+better. Over the 44 answers of the 2026-10-11 run (`grounding-20261011-162603.json`, 10 of them doubtful) it now
+refuses 12 instead of 31, with 10 false alarms instead of 25, though it catches 4 of the doubtful answers instead
+of 8. That is still well behind the judge, so the judge stays the default here; the live demo uses NLI.
+
 ## Voice
 
 Press Record, speak your question in English, press Stop, and the answer is read back aloud. The reply
@@ -570,8 +631,8 @@ The commands in this README are for macOS and Linux.
 
 ## Security
 
-There is no login: the API and dashboard are meant for your machine (or, for the demo, only the
-dashboard port is public). What protects them (spec 0008):
+There is no login: the API and dashboard are meant for your machine. (The live demo is a static site plus
+a separate PDF reader Space on Gradio 6; neither exposes the API or the dashboard.) What protects them (spec 0008):
 
 - **Other websites cannot change your corpus.** The API answers only to known host names, and refuses
   uploads, deletes and other changes sent from another site's page.
@@ -583,15 +644,15 @@ dashboard port is public). What protects them (spec 0008):
 - **Indexing never interrupts answers.** A new index is built beside the old one and swapped in.
 
 **Dependency audit** (`pip-audit`, reports in `docs/security/`, 2026-10-15). pypdf (6.16.1 to 6.19.0)
-and urllib3 (2.7.0 to 2.8.0) were updated. These remain, because their fixes need Gradio 6, a major
-upgrade planned as its own feature before the public demo:
+and urllib3 (2.7.0 to 2.8.0) were updated. These remain in the local dashboard, because their fixes need Gradio 6, a major
+upgrade planned as its own feature (the demo's PDF reader already runs Gradio 6):
 
 | Package | Advisories | Applies here? |
 | --- | --- | --- |
 | gradio 5.50.0 | PYSEC-2026-63, -65 (OAuth) | No: the dashboard has no login components. |
 | | PYSEC-2026-64, -2179 (path traversal on Windows, FileExplorer) | No: Linux and macOS only, no FileExplorer. |
 | | PYSEC-2026-66 (SSRF) | Possibly: fixed in Gradio 6.6. Until then, keep the dashboard on your machine. |
-| | PYSEC-2026-2178 (session fixation across Spaces) | Yes for the Hugging Face demo: upgrade before it goes public. |
+| | PYSEC-2026-2178 (session fixation across Spaces) | No: the dashboard is not deployed to Spaces; the demo's Space runs Gradio 6. |
 | | PYSEC-2026-211 (audio cache key) | No fix released yet. |
 | starlette 0.52.1 | PYSEC-2026-161, -248 (Host header and path in `request.url`) | Mitigated: the API refuses unknown hosts before any route runs. |
 | | PYSEC-2026-249 (form part size limits) | Mitigated: request bodies are capped while they are read. |

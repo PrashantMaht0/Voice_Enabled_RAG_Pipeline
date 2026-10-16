@@ -52,13 +52,22 @@
           <ol id="conversation" class="conversation" aria-live="polite"></ol>
           <form id="ask-form" class="ask-form">
             <label for="question" class="visually-hidden">Your question</label>
-            <textarea id="question" rows="2" maxlength="1000" placeholder="Load the models, then ask about the sample documents…"
+            <textarea id="question" rows="2" maxlength="1000" placeholder="Load the models, then ask about the documents…"
                       disabled></textarea>
             <div class="ask-actions">
+              <label for="scope" class="scope-label">Search</label>
+              <select id="scope">
+                <option value="all">All documents</option>
+                <option value="sample">Sample documents</option>
+                <option value="mine">My documents</option>
+              </select>
+              <button id="mic" type="button" aria-pressed="false" disabled>Speak</button>
               <button id="ask" class="primary" type="submit" disabled>Ask</button>
               <button id="stop" type="button" hidden>Stop</button>
               <button id="clear" type="button">Clear chat</button>
             </div>
+            <label class="switch"><input id="grounding" type="checkbox" checked> Check each sentence against the documents
+              (sentences they do not support are removed)</label>
           </form>
         </div>
         <aside class="side" aria-label="The last answer">
@@ -84,16 +93,35 @@ and vector search, fusion, rerank, the confidence gate, generation and grounding
     </section>
 
     <section id="tab-docs" role="tabpanel" aria-labelledby="tab-docs-btn" class="tabpanel docs" hidden>
-      <div class="panel">
-        <h2>Sample documents</h2>
-        <p class="hint">Openly licensed, read ahead of time by the real pipeline (layoutlmv3 tables, qwen2.5vl:7b figures).</p>
-        <div id="documents" class="doc-list"></div>
+      <div class="docs-side">
+        <div class="panel upload">
+          <h2>Add your documents</h2>
+          <p class="hint">A PDF of up to 5 pages, or a Markdown or text file, up to 10 MB each. Tables and charts in PDFs are
+            read by the same models as the sample.</p>
+          <label id="upload-zone" class="dropzone" for="upload-file">
+            <input id="upload-file" type="file" accept=".pdf,.md,.txt" multiple class="visually-hidden">
+            <span class="dropzone-title">Choose files or drop them here</span>
+            <span id="upload-quota" class="hint"></span>
+          </label>
+          <p id="upload-message" class="upload-message" role="status" aria-live="polite"></p>
+          <p class="hint">Files are sent to a <a id="space-link" href="https://huggingface.co/spaces" rel="noopener">Hugging Face
+            Space</a> to be read, and deleted there right after. Their chunks stay in this browser. A PDF uses some of your
+            free daily GPU time on Hugging Face.</p>
+          <button id="clear-docs" type="button" class="danger">Clear my documents</button>
+        </div>
+        <div class="panel">
+          <h2>Sample documents</h2>
+          <p class="hint">Openly licensed, read ahead of time by the real pipeline (layoutlmv3 tables, qwen2.5vl:7b figures).</p>
+          <div id="documents" class="doc-list"></div>
+        </div>
       </div>
       <div class="panel">
         <h2>Corpus</h2>
         <div class="table-scroll"><table class="data-table" id="corpus"><thead><tr>
           <th scope="col">File</th><th scope="col">Pages</th><th scope="col">Chunks</th><th scope="col">Tables</th>
-          <th scope="col">Figures</th><th scope="col">Status</th></tr></thead><tbody></tbody></table></div>
+          <th scope="col">Figures</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th>
+        </tr></thead><tbody></tbody></table></div>
+        <p id="my-empty" class="hint">You have not added any documents yet.</p>
       </div>
     </section>
 
@@ -136,8 +164,10 @@ and vector search, fusion, rerank, the confidence gate, generation and grounding
   </main>
 
   <footer class="footer">
-    <p>Questions, search and answers run on your device. Models download from the Hugging Face CDN and the Python
-      runtime from jsDelivr. No analytics.</p>
+    <p>Questions, search, answers and speech run on your device; nothing you ask or say leaves it. The models download
+      from the Hugging Face CDN, the answer model's GPU code from GitHub, and the Python and ONNX runtimes from jsDelivr.
+      Only a file you upload is sent anywhere: to the PDF reader on Hugging Face, which deletes it after reading.
+      Your documents, questions and settings stay in this browser until you clear them. No analytics.</p>
     <p><a href="https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline">Source code</a> · sample documents are public
       domain or CC BY 4.0, see Documents.</p>
   </footer>

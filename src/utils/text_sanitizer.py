@@ -98,6 +98,39 @@ def sanitize_for_speech(text: str) -> str:
     return text.strip()
 
 
+SPLIT_OVER_WORDS = 12        # an approved sentence longer than this is spoken in clause sized pieces
+MIN_PIECE_WORDS = 5          # so the first piece plays after about a second of synthesis, not three
+
+
+def speech_pieces(spoken: str) -> list[str]:
+    """A long sentence cut at commas, semicolons and colons into pieces of at least MIN_PIECE_WORDS words.
+
+    Only how an approved sentence is fed to the voice changes; nothing unchecked is ever spoken."""
+    if len(spoken.split()) <= SPLIT_OVER_WORDS:
+        return [spoken]
+    parts = [p.strip() for p in re.split(r"(?<=[,;:])\s+", spoken) if p.strip()]
+    pieces: list[str] = []
+    for part in parts:
+        if pieces and len(pieces[-1].split()) < MIN_PIECE_WORDS:
+            pieces[-1] += " " + part
+        else:
+            pieces.append(part)
+    if len(pieces) > 1 and len(pieces[-1].split()) < MIN_PIECE_WORDS:
+        last = pieces.pop()                  # pop first: `pieces[-2] += pieces.pop()` wrote over the piece before
+        pieces[-1] += " " + last
+    return pieces
+
+
+# What Whisper writes for silence or a cough; never worth a search (spec 0006, AC-5; the browser demo uses it too)
+FILLER_TRANSCRIPTS = {"", "you", "thank you", "thanks for watching", "bye"}
+
+
+def is_filler_transcript(transcript: str) -> bool:
+    """True when a transcript is only filler such as "You." or "Thank you."."""
+    words = re.sub(r"[^\w\s]", "", (transcript or "").lower()).strip()
+    return re.sub(r"\s+", " ", words) in FILLER_TRANSCRIPTS
+
+
 # A refusal asserts no facts, so it is never reused as context or scored.
 REFUSAL_MARKERS = (
     "insufficient context",

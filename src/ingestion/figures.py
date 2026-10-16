@@ -20,6 +20,12 @@ READ_KINDS = ("chart", "diagram")
 
 # Bumped whenever a prompt, a schema or a num_predict value changes, so cached reads and the fingerprint go stale.
 FIGURE_PROMPT_VERSION = 2
+# Bumped whenever figure_body writes a read differently: the index rebuilds its figure chunks from cached reads.
+FIGURE_BODY_VERSION = 2
+# A series of at least this many values that are all the same is a copy, not a reading: the vision model sometimes
+# repeats the latest value across a whole time series (Census Figure 6: "Female: $55,240" eight times for 1960 to
+# 2023). Shown to the answer model, such a line outweighs the true figures (spec 0009 parity investigation).
+COPIED_SERIES_MIN = 3
 FIGURE_PAD_PT = 18           # padding around each candidate, for axis labels and legends
 CLUSTER_GAP_PT = 12          # drawn objects this close join the same cluster
 CLUSTER_MIN_OBJECTS = 10     # fewer drawn objects than this is not a figure
@@ -119,7 +125,7 @@ def figure_fingerprint(parser: str = None) -> str:
     if configured_backend() != "ollama":
         parser = f"{configured_backend()}:{parser}@{get('ingestion.figure_revision', 'main')}"
     return (f"|fig:{parser}|{s['image_px']}|{s['min_area']}|{s['aspect_min']}-{s['aspect_max']}"
-            f"|{s['series_cap']}x{s['values_cap']}|{FIGURE_PROMPT_VERSION}")
+            f"|{s['series_cap']}x{s['values_cap']}|{FIGURE_PROMPT_VERSION}|body{FIGURE_BODY_VERSION}")
 
 
 # --- schemas and validation ---
@@ -186,6 +192,12 @@ def parse_kind(reply: str) -> Optional[str]:
 
 # --- the figure chunk body ---
 
+def copied_series(values: List[str]) -> bool:
+    """True for a series that repeats one value (COPIED_SERIES_MIN or more times) instead of reading the chart."""
+    cleaned = [v.strip() for v in values if v.strip()]
+    return len(cleaned) >= COPIED_SERIES_MIN and len(set(cleaned)) == 1
+
+
 def figure_body(caption: Optional[str], figure: Optional[Dict]) -> str:
     """Everything after the citation header: the marker, the caption, then the description or the fallback."""
     lines = [MARKER, f"Caption: {caption or 'none'}"]
@@ -194,7 +206,7 @@ def figure_body(caption: Optional[str], figure: Optional[Dict]) -> str:
         return "\n".join(lines)
     lines += [f"Title: {figure['title'] or 'none'}", f"Type: {figure['type']}",
               f"Axes: {', '.join(figure['axes']) or 'none'}"]
-    lines += [f"{s['name'] or 'Series'}: {', '.join(s['values'])}" for s in figure["series"]]
+    lines += [f"{s['name'] or 'Series'}: {', '.join(s['values'])}" for s in figure["series"] if not copied_series(s["values"])]
     lines.append(f"Summary: {figure['summary']}")
     return "\n".join(lines)
 

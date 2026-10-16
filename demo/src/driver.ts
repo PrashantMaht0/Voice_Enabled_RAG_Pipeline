@@ -9,13 +9,17 @@ export type Span = { layer: string; ms: number; details: string };
 export type Event = { type: string; [key: string]: any };
 export type Usage = { prompt_tokens: number | null; output_tokens: number | null };
 
-export type Question = { query: string; history: { role: string; content: string }[]; docs: string[] | null; grounding: boolean };
+export type Question = { query: string; history: { role: string; content: string }[]; docs: string[] | null; grounding: boolean;
+                         channel?: "typed" | "voice" };
 export type Handlers = { onEvent: (event: Event) => void; onSpan: (span: Span) => void };
 
 export class Driver {
   private stream: AsyncIterator<any> | null = null;
   private stopped = false;
   usage: Usage = { prompt_tokens: null, output_tokens: null };
+  /** The grounding judge's own engine, and why grounding cannot run (still loading, failed), or null once ready. */
+  judge: MLCEngineInterface | null = null;
+  checkProblem: string | null = "the grounding judge is still loading";
 
   constructor(private python: WorkerRpc, private models: WorkerRpc, private engine: MLCEngineInterface,
               private settings: Settings) {}
@@ -24,7 +28,7 @@ export class Driver {
   async ask(question: Question, handlers: Handlers): Promise<Record<string, any> | null> {
     this.stopped = false;
     this.usage = { prompt_tokens: null, output_tokens: null };
-    const request = JSON.stringify({ query: question.query, history: question.history, channel: "typed" });
+    const request = JSON.stringify({ query: question.query, history: question.history, channel: question.channel ?? "typed" });
     let item = JSON.parse(await this.python.call<string>("start",
       { request, docs: JSON.stringify(question.docs), grounding: question.grounding }));
     while (!item.end) {
@@ -87,8 +91,17 @@ export class Driver {
         this.stream = null;
         return { done: true, ...this.usage };
       }
-      case "CheckSentence":               // grounding arrives in build task 5; until then the core never asks
-        return { error: "grounding check not loaded" };
+      case "CheckSentence":               // the judge's raw reply goes back; the core reads it, and fails open on an error
+        if (this.checkProblem || !this.judge) return { error: this.checkProblem ?? "the grounding judge is not loaded" };
+        try {
+          const reply = await this.judge.chat.completions.create({
+            messages: effect.judge.messages, temperature: 0, max_tokens: 20, stream: false,
+            response_format: { type: "json_object", schema: JSON.stringify(effect.judge.schema) },
+          });
+          return { reply: reply.choices[0]?.message?.content ?? "" };
+        } catch (error) {
+          return { error: `the grounding judge failed (${String((error as Error)?.message ?? error).slice(0, 120)})` };
+        }
       default:
         throw new Error(`unknown effect ${effect.effect}`);
     }

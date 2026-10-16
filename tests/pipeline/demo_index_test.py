@@ -5,6 +5,7 @@ import os
 import sys
 
 import numpy as np
+import pytest
 
 from src.demo_index import DemoIndex, tokens
 
@@ -126,3 +127,83 @@ def test_the_bridge_computes_the_dashboards_metrics_over_browser_traces():
     assert m["rates"]["retrieval_pass_rate"] == 0.5 and m["rates"]["refusal_rate"] == 0.5
     assert m["stages"]["rerank"] == {"p50": 800, "p95": 800, "p99": 800, "n": 1}
     assert m["tokens"]["total"] == 2020 and m["latency"]["p50"] == 7000
+
+
+def test_an_upload_joins_the_index_and_clearing_uploads_keeps_the_sample():
+    """covers: AC-7, AC-9, AC-10"""
+    bridge.index = DemoIndex(dims=DIMS)
+    sample = [chunk("energy.pdf", 0, "Brent crude oil price.")]
+    bridge.load_sample(json.dumps(sample), unit(1, 0, 0, 0).tobytes())
+    mine = [chunk("notes.md", 0, "The pump runs at 40 litres a minute.")]
+
+    bridge.add_doc("notes.md", json.dumps(mine), unit(0, 1, 0, 0).tobytes())
+    found = bridge.index.search_sparse("pump litres", 5, ["notes.md"])
+    bridge.clear_uploads()
+
+    assert [c["metadata"]["source"] for c in found] == ["notes.md"]
+    assert bridge.index.names() == ["energy.pdf"]
+
+
+def drive(grounding, check_reply):
+    """Runs one question through the bridge as the page would, with fake models; returns the effects the page saw
+    and the final record."""
+    bridge.index = sample_index()
+    bridge.configure(json.dumps({"top_k_rerank": 3, "confidence_threshold": 0.84, "checker": "nli:x"}))
+    tokens = iter(["The Brent price is 84 dollars per barrel. ", "It will double next week because of aliens. "])
+    item = json.loads(bridge.start(json.dumps({"query": "What is the crude oil price?", "history": []}), "null", grounding))
+    seen, events = [], []
+    while not item.get("end"):
+        effect = item.get("effect")
+        seen.append(effect or item["type"])
+        if effect == "Embed":
+            reply = [unit(1, 0, 0, 0).tolist() for _ in item["texts"]]
+        elif effect == "Rerank":
+            reply = [0.99] * len(item["texts"])
+        elif effect == "NextToken":
+            reply = {"token": next(tokens)} if seen.count("NextToken") <= 2 else {"done": True}
+        elif effect == "CheckSentence":
+            reply = check_reply(item["sentence"])
+        else:
+            reply = None
+            if not effect:
+                events.append(item)
+        item = json.loads(bridge.step(json.dumps(reply)))
+    return seen, events, item["record"]
+
+
+def test_nli_scores_from_the_page_drop_an_unsupported_sentence():
+    """covers: AC-5"""
+    seen, events, record = drive(True, lambda s: {"scores": [0.1] if "aliens" in s else [0.1, 0.93]})
+
+    done = next(e for e in events if e["type"] == "done")
+    assert seen.count("CheckSentence") == 2
+    assert done["grounded"] is False and done["dropped_sentences"] == ["It will double next week because of aliens."]
+    assert record["grounding_checker"] == "nli:x"
+
+
+def test_with_the_switch_off_the_bridge_answers_the_check_and_the_answer_is_unchecked():
+    """covers: AC-5"""
+    seen, events, record = drive(False, lambda s: pytest.fail("the page was asked to check a sentence"))
+
+    done = next(e for e in events if e["type"] == "done")
+    assert "CheckSentence" not in seen
+    assert done["grounded"] is None and not done["dropped_sentences"]
+    assert record["grounding_checker"] == "nli:x (unchecked: the grounding switch is off)"
+
+
+def test_a_failed_nli_model_fails_open_with_its_reason():
+    """covers: AC-5"""
+    _, events, record = drive(True, lambda s: {"error": "the grounding model did not load"})
+
+    done = next(e for e in events if e["type"] == "done")
+    assert done["grounded"] is None and "aliens" in done["answer"]
+    assert record["grounding_checker"] == "nli:x (unchecked: the grounding model did not load)"
+
+
+def test_the_bridge_speaks_with_the_servers_cleanup_and_hears_filler_as_silence():
+    """covers: AC-6"""
+    pieces = json.loads(bridge.speech("The **price** is $84 [Source: energy.pdf | Page: 3]."))
+
+    assert pieces == ["The price is $84."]
+    assert json.loads(bridge.speech("[Source: energy.pdf | Page: 3]")) == []
+    assert bridge.heard_nothing(" You. ") and not bridge.heard_nothing("What is the price?")

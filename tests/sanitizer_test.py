@@ -85,3 +85,18 @@ def test_citations_file_names_chunk_and_page_numbers_are_not_spoken():
 def test_plain_prose_is_unchanged():
     prose = "A Web App is hosted in an App Service... It scales out on demand."
     assert sanitize_for_speech(prose) == prose
+
+
+def test_a_long_sentence_ending_in_a_short_clause_keeps_every_clause():
+    """The short last clause joins the piece before it; no earlier piece is lost (it once overwrote the first)."""
+    from src.utils.text_sanitizer import speech_pieces
+    sentence = "one two three four five, six seven eight nine ten, eleven twelve thirteen"
+
+    assert speech_pieces(sentence) == ["one two three four five,", "six seven eight nine ten, eleven twelve thirteen"]
+
+
+def test_filler_transcripts_are_recognised_whatever_their_punctuation():
+    """covers: AC-6 (spec 0009)"""
+    from src.utils.text_sanitizer import is_filler_transcript
+    assert is_filler_transcript(" Thank you. ") and is_filler_transcript("You") and is_filler_transcript("")
+    assert not is_filler_transcript("What is the Brent price?")

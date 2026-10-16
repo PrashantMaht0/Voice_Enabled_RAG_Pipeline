@@ -31,6 +31,19 @@ self.onmessage = async (event: MessageEvent<Call>) => {
       reply(id, { result: bridge.start(args.request, args.docs, args.grounding) });
     } else if (op === "step") {
       reply(id, { result: bridge.step(args.result) });
+    } else if (op === "add_doc") {
+      bridge.add_doc(args.name, args.chunks, new Uint8Array(args.vectors));
+      reply(id, { result: null });
+    } else if (op === "remove_doc") {
+      bridge.remove_doc(args.name);
+      reply(id, { result: null });
+    } else if (op === "clear_uploads") {
+      bridge.clear_uploads();
+      reply(id, { result: null });
+    } else if (op === "speech") {
+      reply(id, { result: bridge.speech(args.sentence) });
+    } else if (op === "heard_nothing") {
+      reply(id, { result: bridge.heard_nothing(args.transcript) });
     } else if (op === "metrics") {
       reply(id, { result: bridge.metrics(args.rows, args.spans) });
     } else if (op === "stop") {

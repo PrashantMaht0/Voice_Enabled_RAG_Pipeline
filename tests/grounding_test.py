@@ -8,7 +8,7 @@ import pytest
 from src.verification import grounding
 from src.verification.grounding import (GroundingResult, JudgeChecker, NLIChecker, PassThrough, SentenceBuffer,
                                         SentenceJudge, check_answer, is_empty_query, join_sentences, plain,
-                                        split_sentences, windows, word_count)
+                                        split_sentences, token_windows, windows, word_count)
 
 TAG = "[Source: a.pdf | Page: 1]"
 TAG2 = "[Source: b.pdf | Page: 7]"
@@ -157,8 +157,10 @@ def nli_with(entailment_logits, threshold=0.5):
     checker = NLIChecker.__new__(NLIChecker)
     checker.threshold, checker.entailment, checker.name = threshold, 1, "nli:fake"
     checker._lock = __import__("threading").Lock()
-    checker.model = SimpleNamespace(predict=lambda pairs, apply_softmax=False: np.array(
-        [entailment_logits[i % len(entailment_logits)] for i in range(len(pairs))]))
+    checker.model = SimpleNamespace(tokenizer=SimpleNamespace(
+        encode=lambda text, add_special_tokens=False: [hash(w) % 1000 + 10 for w in text.split()],
+        cls_token_id=1, sep_token_id=2))
+    checker._logits = lambda rows: np.array([entailment_logits[i % len(entailment_logits)] for i in range(len(rows))])
     return checker
 
 
@@ -169,6 +171,38 @@ def test_nli_supports_when_some_window_entails_above_the_threshold():
 
 def test_nli_with_no_chunks_is_not_supported():
     assert nli_with([[0.0, 5.0, 0.0]]).supported("claim", []) is False
+
+
+def test_a_window_that_fits_the_model_is_one_input():
+    """covers: AC-5 (spec 0009)"""
+    assert token_windows([5, 6, 7], [8, 9], cls=1, sep=2) == [[1, 5, 6, 7, 2, 8, 9, 2]]
+
+
+def test_a_long_window_becomes_short_overlapping_premises_covering_all_of_it():
+    """The small NLI model misses a fact inside a long premise. covers: AC-5 (spec 0009)"""
+    premise, sentence = list(range(100, 400)), list(range(10, 30))
+
+    parts = token_windows(premise, sentence, cls=1, sep=2)
+    seen = [p[1:p.index(2)] for p in parts]
+
+    assert all(len(s) <= 64 for s in seen) and all(p[-21:] == sentence + [2] for p in parts)
+    assert sorted({t for s in seen for t in s}) == premise
+    assert seen[0][-24:] == seen[1][:24]
+
+
+def test_inputs_stay_within_the_models_limit_and_a_very_long_sentence_is_capped():
+    """covers: AC-5 (spec 0009)"""
+    parts = token_windows(list(range(100, 1700)), list(range(10, 610)), cls=1, sep=2, premise_tokens=1000, overlap=100)
+    assert all(len(p) <= 512 for p in parts) and all(len(p) - p.index(2) - 2 == 256 for p in parts)
+
+
+def test_nli_scores_every_token_window_of_a_long_chunk():
+    """covers: AC-5 (spec 0009)"""
+    long_chunk = f"{TAG}\n" + " ".join(f"w{i}" for i in range(120))      # one word window, three token windows
+    checker = nli_with([[5.0, 0.0, 0.0], [5.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
+
+    assert len(checker.entailment_scores("a claim", [long_chunk])) == 3
+    assert checker.supported("a claim", [long_chunk]) is True
 
 
 def test_long_chunks_are_scored_in_overlapping_windows():
@@ -299,3 +333,37 @@ def test_queries_without_content_words_are_empty(query):
 @pytest.mark.parametrize("query", ["What is DNS?", "Define RBAC", "VM", "port 443"])
 def test_short_real_questions_are_not_empty(query):
     assert is_empty_query(query) is False
+
+
+def test_a_judges_raw_reply_is_read_the_same_way_everywhere():
+    """The browser demo sends the judge's JSON text; the server reads its own with the same rule. covers: AC-5 (spec 0009)"""
+    assert grounding.judge_verdict('{"supported": "yes"}') is True
+    assert grounding.judge_verdict('{"supported": "no"}') is False
+    assert grounding.judge_verdict('{"supported": "maybe"}') is None and grounding.judge_verdict("not json") is None
+
+
+def test_the_check_effect_carries_the_judges_exact_messages_and_schema():
+    """covers: AC-5 (spec 0009)"""
+    steps = grounding.JudgeSteps([f"{TAG}\nThe pump runs at 42 litres a minute."], "judge:x")
+    effect = steps.check_effect("The pump runs at 42 litres.")
+
+    assert effect["judge"]["messages"] == grounding.judge_messages("The pump runs at 42 litres a minute.", "The pump runs at 42 litres.")
+    assert effect["judge"]["schema"] == grounding.JUDGE_SCHEMA
+
+
+def test_a_raw_judge_reply_drops_or_keeps_the_sentence():
+    """covers: AC-5 (spec 0009)"""
+    def run(reply):
+        steps = grounding.JudgeSteps([f"{TAG}\nbody"], "judge:x")
+        gen = steps.judge_steps("A claim with enough words.")
+        next(gen)
+        try:
+            gen.send({"reply": reply})
+        except StopIteration as done:
+            return done.value, steps.result
+
+    kept, result = run('{"supported": "yes"}')
+    dropped, result_no = run('{"supported": "no"}')
+    invalid, result_bad = run("garbage")
+    assert kept == ["A claim with enough words."] and dropped == [] and result_no.dropped
+    assert invalid == ["A claim with enough words."] and result_bad.invalid == 1

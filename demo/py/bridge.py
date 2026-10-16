@@ -10,9 +10,11 @@ from src.observability.metrics import summarize
 from src.pipeline import core
 from src.pipeline.limits import QuestionTooLarge
 from src.pipeline.settings import Settings
+from src.utils.text_sanitizer import is_filler_transcript, sanitize_for_speech, speech_pieces
 
 index = DemoIndex()
-state = {"config": {}, "steps": None, "record": None}
+state = {"config": {}, "steps": None, "record": None, "sample": set(), "grounding": True}
+SWITCHED_OFF = "the grounding switch is off"
 
 
 def configure(config_json: str) -> None:
@@ -27,6 +29,7 @@ def as_bytes(vectors) -> bytes:
 def load_sample(chunks_json: str, vectors) -> int:
     chunks = json.loads(chunks_json)
     index.load(chunks, as_bytes(vectors))
+    state["sample"] = {c["doc"] for c in chunks}
     return len(chunks)
 
 
@@ -38,6 +41,24 @@ def remove_doc(name: str) -> None:
     index.remove_doc(name)
 
 
+def clear_uploads() -> None:
+    """Clear my documents: every document that is not part of the sample leaves the index."""
+    for name in index.names():
+        if name not in state["sample"]:
+            index.remove_doc(name)
+
+
+def speech(sentence: str) -> str:
+    """What the voice says for one approved sentence: the server's speech cleanup, cut into clause sized pieces."""
+    spoken = sanitize_for_speech(sentence)
+    return json.dumps(speech_pieces(spoken) if spoken else [])
+
+
+def heard_nothing(transcript: str) -> bool:
+    """A transcript that is only filler ("You.", "Thank you.") is treated as silence, as the dashboard does."""
+    return is_filler_transcript(transcript)
+
+
 def metrics(rows_json: str, spans_json: str) -> str:
     """The Observability tab's numbers: the dashboard's own summarize over the browser's saved traces."""
     return json.dumps(summarize(json.loads(rows_json), json.loads(spans_json)))
@@ -47,8 +68,7 @@ def start(request_json: str, docs_json: str, grounding: bool) -> str:
     """Begins one question; returns its first item (an effect or an event) as JSON."""
     stop()
     settings = Settings.from_dict(state["config"])
-    if not grounding:
-        settings.checker = None
+    state["grounding"] = grounding
     state["record"] = {"path": "error"}
     docs = json.loads(docs_json)
     state["steps"] = core.answer(json.loads(request_json), settings, state["record"], docs=docs)
@@ -88,5 +108,7 @@ def _advance(reply) -> str:
             reply = index.search_dense(item["vector"], item["top_k"], item["docs"])
         elif effect == "SearchSparse":
             reply = index.search_sparse(item["query"], item["top_k"], item["docs"])
+        elif effect == "CheckSentence" and not state["grounding"]:
+            reply = {"error": SWITCHED_OFF}         # the trace then says unchecked and why (AC-5)
         else:
             return json.dumps(item)

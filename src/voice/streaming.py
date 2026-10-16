@@ -14,31 +14,9 @@ from typing import Iterator, List, Optional
 
 import numpy as np
 
-from src.utils.text_sanitizer import sanitize_for_speech
+from src.utils.text_sanitizer import sanitize_for_speech, speech_pieces   # noqa: F401 (speech_pieces re-exported)
 
 _DONE = object()
-SPLIT_OVER_WORDS = 12        # an approved sentence longer than this is spoken in clause sized pieces
-MIN_PIECE_WORDS = 5          # so the first piece plays after about a second of synthesis, not three
-
-
-def speech_pieces(spoken: str) -> List[str]:
-    """A long sentence cut at commas, semicolons and colons into pieces of at least MIN_PIECE_WORDS words.
-
-    Only how an approved sentence is fed to the voice changes; nothing unchecked is ever spoken."""
-    if len(spoken.split()) <= SPLIT_OVER_WORDS:
-        return [spoken]
-    parts = [p.strip() for p in re.split(r"(?<=[,;:])\s+", spoken) if p.strip()]
-    pieces: List[str] = []
-    for part in parts:
-        if pieces and len(pieces[-1].split()) < MIN_PIECE_WORDS:
-            pieces[-1] += " " + part
-        else:
-            pieces.append(part)
-    if len(pieces) > 1 and len(pieces[-1].split()) < MIN_PIECE_WORDS:
-        pieces[-2] += " " + pieces.pop()
-    return pieces
-
-
 @dataclass
 class SpokenSentence:
     """One synthesized speech piece, in the order it is played."""
