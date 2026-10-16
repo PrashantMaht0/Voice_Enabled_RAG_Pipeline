@@ -23,16 +23,18 @@ from src.ingestion.chunking import DocumentChunker
 from src.ingestion.loader import DocumentLoader
 from src.llm.llm_client import LocalLLMClient, generated_tokens
 from src.observability.store import TraceStore
+from src.pipeline import core
+from src.pipeline.limits import check_history, check_query
+from src.pipeline.settings import Settings
+from src.pipeline.sources import append_citations, build_citations  # noqa: F401  (imported from here by tests)
 from src.retrieval.query_rewriter import QueryRewriter
 from src.retrieval.retriever import HybridRetriever
 from src.utils.config import get
 from src.utils.metrics import PipelineTracer
 from src.utils.query_cache import QueryCache
-from src.utils.text_sanitizer import CITATION_TAG, SOURCE_HEADER, is_refusal, parse_tag, usable_history
 from src.vector_db.index_worker import IndexWorker
 from src.vector_db.vector_store import INDEX_FORMAT_VERSION
 from src.verification import grounding
-from src.verification.citations import strip_ungrounded_citations
 
 router = APIRouter()
 
@@ -117,98 +119,12 @@ class QueryRequest(BaseModel):
     @field_validator("query")
     @classmethod
     def query_fits(cls, value: str) -> str:
-        limit = int(get("api.max_query_chars", 1000))
-        if len(value) > limit:
-            raise ValueError(f"the question is longer than {limit} characters")
-        return value
+        return check_query(value, int(get("api.max_query_chars", 1000)))
 
     @field_validator("history")
     @classmethod
     def history_fits(cls, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        turns, chars = int(get("api.max_history_turns", 6)), int(get("api.max_turn_chars", 2000))
-        if len(value) > turns:
-            raise ValueError(f"history has more than {turns} turns")
-        for turn in value:
-            if turn.get("role") not in ("user", "assistant"):
-                raise ValueError("each history turn needs role 'user' or 'assistant'")
-            if len(turn.get("content", "")) > chars:
-                raise ValueError(f"a history turn is longer than {chars} characters")
-        return value
-
-
-def build_citations(chunks: List[str]) -> List[Dict]:
-    """Provenance derived from the chunks that were actually retrieved, in retrieval order."""
-    seen, citations = set(), []
-    for chunk in chunks:
-        match = SOURCE_HEADER.match(chunk)
-        if not match:
-            continue
-        key = parse_tag(match)
-        if key in seen:
-            continue
-        seen.add(key)
-        source, kind, number = key
-        citations.append({
-            "source": source,
-            "page": number if kind == "Page" else None,
-            "chunk": number if kind == "Chunk" else None,
-        })
-    return citations
-
-
-def citation_key(citation: Dict) -> tuple:
-    """The (source, kind, number) a citation's tag parses to."""
-    if citation.get("page") is not None:
-        return citation["source"], "Page", int(citation["page"])
-    return citation["source"], "Chunk", int(citation["chunk"])
-
-
-def citation_tag(citation: Dict) -> str:
-    """The `[Source: file | Page: N]` (or `Chunk: N`) tag for a citation."""
-    source, kind, number = citation_key(citation)
-    return f"[Source: {source} | {kind}: {number}]"
-
-
-def append_citations(answer: str, citations: List[Dict]) -> str:
-    """Appends source tags the model failed to emit itself."""
-    if not citations or not answer.strip():
-        return answer
-
-    already = {parse_tag(m) for m in CITATION_TAG.finditer(answer)}
-    missing = [c for c in citations if citation_key(c) not in already]
-    if not missing:
-        return answer
-
-    tags = " ".join(citation_tag(c) for c in missing)
-    return f"{answer.rstrip()} {tags}"
-
-
-def log_citations(citations: List[Dict]) -> None:
-    """One terminal line per answered query, naming each cited file and page."""
-    if not citations:
-        return
-    cited = ", ".join(
-        f"{c['source']} p.{c['page']}" if c.get("page") is not None else f"{c['source']} chunk {c['chunk']}"
-        for c in citations
-    )
-    print(f"[CITATIONS] {cited}")
-
-
-def resolve_search_query(request: QueryRequest, tracer=None) -> str:
-    """Resolves follow-up pronouns into a standalone query."""
-    search_query = request.query
-
-    # Refused turns carry no subject and would drag the next question off topic.
-    history = usable_history(request.history)
-
-    if history:
-        if tracer:
-            tracer.start_span("rewrite")
-        search_query = get_rewriter().resolve_query(search_query, history, tracer=tracer)
-        if tracer:
-            tracer.end_span("rewrite", f"Standalone query — {search_query!r}")
-
-    return search_query
+        return check_history(value, int(get("api.max_history_turns", 6)), int(get("api.max_turn_chars", 2000)))
 
 
 def corpus_files(raw_dir: str = None) -> list:
@@ -437,151 +353,73 @@ def trace_config() -> Dict:
     return config
 
 
-def with_kinds(citations: List[Dict], details: List[Dict]) -> List[Dict]:
-    """Each citation gains the kinds (text, table, figure) of the retrieved chunks behind it (spec 0006)."""
-    order = {"text": 0, "table": 1, "figure": 2}
-    for c in citations:
-        kinds = {d.get("kind") or "text" for d in details
-                 if d.get("source") == c["source"] and d.get("page") == c.get("page")}
-        c["kinds"] = sorted(kinds or {"text"}, key=lambda k: order.get(k, 3))
-    return citations
-
-
-def kept_citations(chunks: List[str], result) -> List[Dict]:
-    """Today's citations (every retrieved source), minus sources only a dropped sentence cited."""
-    citations = build_citations(chunks)
-    tags = lambda texts: {parse_tag(m) for t in texts for m in CITATION_TAG.finditer(t)}
-    only_dropped = tags(result.dropped_raw) - tags(result.kept)
-    return [c for c in citations if citation_key(c) not in only_dropped]
+def server_settings() -> Settings:
+    """The core's settings from config.yaml (the gate threshold and the checker come from the live objects)."""
+    return Settings.from_config(get)
 
 
 def answer_events(request: QueryRequest):
-    """The one answer pipeline (spec 0006): meta, approved sentences, done. Both query endpoints use it."""
+    """The one answer pipeline (spec 0006), driven for the server (spec 0009): `core.answer` decides everything,
+    and this loop answers its effects through the server's objects and hooks. Both query endpoints use it."""
     started = time.perf_counter()
     tracer = PipelineTracer()
     traces = get_traces()
     trace_id = traces.start(request.channel, request.query)
     record = {"path": "error", "search_query": request.query}
+    state = {}                                  # the open answer stream, its chunks and the grounding checker
 
-    def elapsed():
-        """Milliseconds since the request arrived."""
-        return (time.perf_counter() - started) * 1000
-
-    def sentence(index: int, text: str) -> Dict:
-        """A sentence event (citation tags removed for display), noting when the first one went out."""
-        if record.get("first_sentence_ms") is None:
-            record["first_sentence_ms"] = elapsed()
-        return {"type": "sentence", "index": index, "text": grounding.plain(text) or text}
-
-    try:
-        search_query = resolve_search_query(request, tracer)
-        record["search_query"] = search_query
-
-        if grounding.is_empty_query(search_query):
-            # Nothing to search for: no cache, retrieval or answer model (spec 0006, AC-5)
-            answer = grounding.EMPTY_QUERY_ANSWER
-            tracer.add_static_span("empty_query", "No content words — refused before retrieval")
-            record.update(path="empty_query", answer=answer)
-            yield {"type": "meta", "trace_id": trace_id, "confidence_score": None, "search_query": search_query,
-                   "citations": [], "retrieved_context": [], "cache": None}
-            yield sentence(0, answer)
-            yield {"type": "done", "answer": answer, "citations": [], "grounded": None, "path": "empty_query",
-                   "dropped_sentences": [], "dropped_citations": [], "cache": None, "trace": tracer.as_list(),
-                   "total_ms": elapsed()}
-            return
-
-        cached, cache_level = get_cache().get(search_query)
-        if cached is not None and cached.get("generation") != current_generation():
-            cached, cache_level = None, None             # answered from an index that has since been replaced
-        if cached is not None:
-            tracer.add_static_span("cache", f"{cache_level.upper()} hit — retrieval and generation skipped")
-            log_citations(cached.get("citations", []))
-            record.update(path="cache", cache_level=cache_level, confidence=cached.get("confidence_score"),
-                          answer=cached["answer"], dropped=cached.get("dropped_sentences", []),
-                          retrieved=cached.get("retrieved"), grounding_checker=cached.get("grounding_checker"))
-            yield {"type": "meta", "trace_id": trace_id, "confidence_score": cached.get("confidence_score"),
-                   "search_query": search_query, "citations": cached.get("citations", []),
-                   "retrieved_context": cached.get("retrieved_context", []), "retrieved": cached.get("retrieved") or [],
-                   "cache": cache_level}
-            for i, text in enumerate(cached.get("sentences") or grounding.split_sentences(cached["answer"])):
-                yield sentence(i, text)
-            yield {"type": "done", **{k: cached.get(k) for k in ("answer", "citations", "grounded", "path")},
-                   "dropped_sentences": cached.get("dropped_sentences", []), "dropped_citations":
-                   cached.get("dropped_citations", []), "cache": cache_level, "trace": tracer.as_list(),
-                   "total_ms": elapsed()}
-            return
-
-        generation = current_generation()
-        chunks, confidence, details = retrieve(search_query, tracer)
-        confidence = float(confidence)
-        record.update(confidence=confidence, retrieved=details)
-        threshold = get_retriever().confidence_threshold
-        gated = confidence < threshold
-        tracer.add_static_span("confidence", f"Top chunk: {confidence:.3f}, threshold: {threshold} — "
-                                             f"{'FAIL' if gated else 'PASS'}")
-        yield {"type": "meta", "trace_id": trace_id, "confidence_score": confidence, "search_query": search_query,
-               "citations": [] if gated else with_kinds(build_citations(chunks), details),
-               "retrieved_context": [] if gated else chunks, "retrieved": [] if gated else details, "cache": None}
-
-        if gated:
-            answer, citations, path, result = "Insufficient context.", [], "gated", None
-            sentences = [answer]
-            yield sentence(0, answer)
+    def perform(effect: Dict):
+        kind = effect["effect"]
+        if kind == "Span":
+            tracer.add_static_span(effect["layer"], effect["details"], effect.get("ms") or 0.0)
+        elif kind == "Rewrite":
+            return get_rewriter().resolve_query(effect["query"], effect["history"], tracer=tracer)
+        elif kind == "CacheLookup":
+            cached, level = get_cache().get(effect["search_query"])
+            if cached is None or cached.get("generation") != current_generation():
+                return None                     # a miss, or answered from an index that has since been replaced
+            return {"payload": cached, "level": level}
+        elif kind == "Retrieve":
+            generation = current_generation()
+            chunks, score, details = retrieve(effect["search_query"], tracer)
+            return {"chunks": chunks, "score": score, "details": details, "generation": generation,
+                    "threshold": get_retriever().confidence_threshold}
+        elif kind == "Generate":
+            state.update(checker=grounding.effective_checker(), chunks=effect["chunks"],
+                         stream=iter(generate_tokens(effect["search_query"], effect["chunks"], tracer)))
+            return {"checker": state["checker"].name}
+        elif kind == "NextToken":
+            try:
+                return {"token": next(state["stream"])}
+            except StopIteration:
+                prompt_tokens = (tracer.layer_tokens("generation") or (None, None))[0]
+                return {"done": True, "prompt_tokens": prompt_tokens, "output_tokens": generated_tokens(tracer)}
+        elif kind == "CheckSentence":
+            return grounding.answer_check(state["checker"], effect, state["chunks"], tracer)
+        elif kind == "CacheStore":
+            get_cache().put(effect["search_query"], effect["payload"])
         else:
-            judge = grounding.SentenceJudge(chunks, tracer=tracer)
-            buffer, index, gen_started = grounding.SentenceBuffer(), 0, time.perf_counter()
-            for token in generate_tokens(search_query, chunks, tracer):
-                for piece in buffer.feed(token):
-                    for approved in judge.judge(piece):
-                        yield sentence(index, approved)
-                        index += 1
-            for piece in buffer.finish():
-                for approved in judge.judge(piece):
-                    yield sentence(index, approved)
-                    index += 1
-            for approved in judge.finish():
-                yield sentence(index, approved)
-                index += 1
-            result = judge.result
-            gen_ms = (time.perf_counter() - gen_started - result.seconds) * 1000
-            tracer.add_static_span("generation", f"LLM call — {generated_tokens(tracer)} tokens generated",
-                                   gen_ms)
-            tracer.add_static_span("grounding", f"{result.checker or 'unchecked'}: {result.checked} checked, "
-                                                f"{len(result.dropped)} dropped"
-                                                + (f", {result.invalid} invalid replies kept" if result.invalid else "")
-                                                + (f" — unchecked: {result.unchecked_reason}"
-                                                   if result.unchecked_reason else ""), result.seconds * 1000)
-            if judge.refused:
-                answer, citations, path, sentences = "Insufficient context.", [], "refused_grounding", \
-                    ["Insufficient context."]
-                yield sentence(index, answer)
-            else:
-                sentences = result.kept
-                answer, dropped_citations = strip_ungrounded_citations(
-                    grounding.join_sentences(result.kept), chunks)
-                record["dropped_citations"] = dropped_citations
-                citations = with_kinds(kept_citations(chunks, result), details)
-                answer = append_citations(answer, citations)
-                path = "refused_model" if result.model_refused and all(is_refusal(k) for k in result.kept) \
-                    else "answered"
+            raise ValueError(f"unknown effect {kind!r}")
+        return None
 
-        log_citations(citations)
-        grounded = result.grounded if result else None
-        dropped = result.dropped if result else []
-        checker = None
-        if result and result.checker:
-            checker = result.checker + (f" (unchecked: {result.unchecked_reason})" if result.unchecked_reason else "")
-        payload = {"answer": answer, "retrieved_context": [] if path == "gated" else chunks,
-                   "confidence_score": confidence, "search_query": search_query, "citations": citations,
-                   "grounded": grounded, "dropped_citations": record.get("dropped_citations", []),
-                   "dropped_sentences": dropped, "sentences": sentences, "path": path,
-                   "retrieved": details, "grounding_checker": checker, "generation": generation}
-        get_cache().put(search_query, payload)
-        record.update(path=path, answer=answer, dropped=dropped, grounding_checker=checker,
-                      kept=len(sentences) if result else None)
-        yield {"type": "done", "answer": answer, "citations": citations, "grounded": grounded, "path": path,
-               "dropped_sentences": dropped, "dropped_citations": payload["dropped_citations"], "cache": None,
-               "trace": tracer.as_list(), "total_ms": elapsed()}
+    steps = core.answer({"query": request.query, "history": request.history, "channel": request.channel},
+                        server_settings(), record)
+    try:
+        reply = None
+        while True:
+            try:
+                item = steps.send(reply)
+            except StopIteration:
+                break
+            if "effect" in item:
+                reply = perform(item)
+                continue
+            reply = None
+            if item["type"] == "meta":
+                item = {"type": "meta", "trace_id": trace_id, **{k: v for k, v in item.items() if k != "type"}}
+            elif item["type"] == "done":
+                item["trace"] = tracer.as_list()
+            yield item
     except GeneratorExit:
         record["path"] = "aborted"
         raise
@@ -591,6 +429,9 @@ def answer_events(request: QueryRequest):
         record.update(path="error", error=str(e))
         yield {"type": "error", "detail": guards.error_message(reference)}
     finally:
+        steps.close()
+        if state.get("stream") is not None and hasattr(state["stream"], "close"):
+            state["stream"].close()             # an answer stopped early never counts its tokens (spec 0007)
         tracer.print_trace()
         dropped = record.get("dropped") or []
         prompt_tokens, output_tokens = tracer.token_totals()
@@ -599,7 +440,7 @@ def answer_events(request: QueryRequest):
                       confidence=record.get("confidence"), answer=record.get("answer"),
                       sentences_kept=record.get("kept"), sentences_dropped=len(dropped) if record.get("answer") else None,
                       dropped_sentences=dropped or None, grounding_checker=record.get("grounding_checker"),
-                      retrieved=record.get("retrieved"), total_ms=elapsed(),
+                      retrieved=record.get("retrieved"), total_ms=(time.perf_counter() - started) * 1000,
                       first_sentence_ms=record.get("first_sentence_ms"), config=trace_config(),
                       error=record.get("error"), prompt_tokens=prompt_tokens, output_tokens=output_tokens)
 

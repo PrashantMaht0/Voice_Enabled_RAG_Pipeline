@@ -1,0 +1,65 @@
+{
+ "hybrid_alpha": 0.5,
+ "top_k_retrieval": 30,
+ "top_k_rerank_pool": 12,
+ "top_k_rerank": 5,
+ "confidence_threshold": 0.84,
+ "temperature": 0.0,
+ "top_p": 0.1,
+ "max_tokens": 256,
+ "answer_style": "full",
+ "context_window": 4096,
+ "checker": "nli:Xenova/nli-deberta-v3-small",
+ "grounding_threshold": 0.5,
+ "max_query_chars": 1000,
+ "max_history_turns": 6,
+ "max_turn_chars": 2000,
+ "embedder_id": "Xenova/bge-small-en-v1.5@ea104dacec62:fp32",
+ "models": {
+  "embedder": {
+   "id": "Xenova/bge-small-en-v1.5",
+   "revision": "ea104dacec62",
+   "dtype": "fp32"
+  },
+  "reranker": {
+   "id": "Xenova/ms-marco-MiniLM-L-12-v2",
+   "revision": "42a4a787e304",
+   "dtype": "fp32",
+   "max_tokens": 512
+  },
+  "nli": {
+   "id": "Xenova/nli-deberta-v3-small",
+   "revision": "6bc2a55c7c0f",
+   "dtype_f16": "fp16",
+   "dtype": "fp32"
+  },
+  "whisper": {
+   "id": "onnx-community/whisper-base.en",
+   "revision": "51eefc0af78b",
+   "dtype_f16": "fp16",
+   "dtype": "fp32"
+  },
+  "kokoro": {
+   "id": "onnx-community/Kokoro-82M-v1.0-ONNX",
+   "revision": "1939ad2a8e41",
+   "dtype": "fp16",
+   "voice": "af_bella"
+  },
+  "answer_models": {
+   "3b": {
+    "f16": "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+    "f32": "Llama-3.2-3B-Instruct-q4f32_1-MLC",
+    "vram_mb_f16": 2264,
+    "vram_mb_f32": 2952,
+    "download_mb": 1807
+   },
+   "1b": {
+    "f16": "Llama-3.2-1B-Instruct-q4f16_1-MLC",
+    "f32": "Llama-3.2-1B-Instruct-q4f32_1-MLC",
+    "vram_mb_f16": 879,
+    "vram_mb_f32": 1129,
+    "download_mb": 695
+   }
+  }
+ }
+}

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V-RAG live demo</title>
+  <meta name="description" content="Ask real documents by text or voice, answered and cited by a RAG pipeline running on your own GPU.">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header class="band">
+    <div class="brand">
+      <h1>V-RAG <span class="badge">live demo</span></h1>
+      <p class="tagline">Ask real documents by text or voice. Answers are checked against them and cited.</p>
+    </div>
+    <p id="status" class="status" role="status">Models not loaded</p>
+  </header>
+
+  <main class="shell">
+    <section id="setup" class="panel setup" aria-labelledby="setup-title">
+      <div class="setup-text">
+        <h2 id="setup-title">Run it on your GPU</h2>
+        <p>The whole question side runs in this tab: search, the answer model and the citations. Nothing you ask
+          leaves your device. The first load downloads the models once; later visits load them from your browser cache.</p>
+      </div>
+      <div class="setup-controls">
+        <label for="model">Answer model</label>
+        <select id="model"></select>
+        <p id="model-hint" class="hint"></p>
+        <button id="load" class="primary" type="button">Load models</button>
+      </div>
+      <ul id="progress" class="progress" aria-live="polite"></ul>
+    </section>
+
+    <section id="no-webgpu" class="panel notice" hidden aria-labelledby="no-webgpu-title">
+      <h2 id="no-webgpu-title">This browser cannot run the models</h2>
+      <p>The demo needs WebGPU: current Chrome or Edge, Safari 26, or a recent Firefox on Windows or Apple silicon.
+        Below are the suggested questions with answers precomputed by the same pipeline on the author's machine.</p>
+      <div id="precomputed" class="precomputed"></div>
+    </section>
+
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" id="tab-ask-btn" aria-controls="tab-ask" aria-selected="true">Ask</button>
+      <button role="tab" id="tab-docs-btn" aria-controls="tab-docs" aria-selected="false" tabindex="-1">Documents</button>
+      <button role="tab" id="tab-trace-btn" aria-controls="tab-trace" aria-selected="false" tabindex="-1">Trace</button>
+      <button role="tab" id="tab-results-btn" aria-controls="tab-results" aria-selected="false" tabindex="-1">Results</button>
+    </nav>
+
+    <section id="tab-ask" role="tabpanel" aria-labelledby="tab-ask-btn" class="tabpanel ask">
+      <div class="panel chat">
+        <div id="suggestions" class="suggestions" aria-label="Suggested questions"></div>
+        <ol id="conversation" class="conversation" aria-live="polite"></ol>
+        <form id="ask-form" class="ask-form">
+          <label for="question" class="visually-hidden">Your question</label>
+          <textarea id="question" rows="2" maxlength="1000" placeholder="Load the models, then ask about the sample documents…"
+                    disabled></textarea>
+          <div class="ask-actions">
+            <button id="ask" class="primary" type="submit" disabled>Ask</button>
+            <button id="stop" type="button" hidden>Stop</button>
+            <button id="clear" type="button">Clear chat</button>
+          </div>
+        </form>
+      </div>
+      <aside class="panel sources" aria-labelledby="sources-title">
+        <h2 id="sources-title">Sources for the last answer</h2>
+        <div id="sources"><p class="empty">Sources appear here after you ask: each retrieved passage with its document,
+          page, kind and reranker score.</p></div>
+      </aside>
+    </section>
+
+    <section id="tab-docs" role="tabpanel" aria-labelledby="tab-docs-btn" class="tabpanel" hidden>
+      <div id="documents" class="doc-grid"></div>
+    </section>
+
+    <section id="tab-trace" role="tabpanel" aria-labelledby="tab-trace-btn" class="tabpanel trace" hidden>
+      <div class="panel trace-list">
+        <h2>Recent questions</h2>
+        <ol id="trace-list"><li class="empty">No questions yet. Each question you ask is traced here, step by step.</li></ol>
+      </div>
+      <div class="panel">
+        <h2 id="trace-title">Steps</h2>
+        <pre id="trace-detail" class="trace-box">Pick a question to see its steps.</pre>
+      </div>
+    </section>
+
+    <section id="tab-results" role="tabpanel" aria-labelledby="tab-results-btn" class="tabpanel" hidden>
+      <div class="panel">
+        <h2>Measured results</h2>
+        <p id="results-note" class="hint"></p>
+        <div id="results" class="table-scroll"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Questions, search and answers run on your device. Models download from the Hugging Face CDN and the Python
+      runtime from jsDelivr. No analytics.</p>
+    <p><a href="https://github.com/PrashantMaht0/Voice_Enabled_RAG_Pipeline">Source code</a> · sample documents are public
+      domain or CC BY 4.0, see Documents.</p>
+  </footer>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

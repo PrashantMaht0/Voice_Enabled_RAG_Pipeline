@@ -307,52 +307,57 @@ class GroundingResult:
         return not self.dropped
 
 
-class SentenceJudge:
-    """Applies the drop policy sentence by sentence, so streaming can emit each approved sentence at once."""
-    def __init__(self, chunks: List[str], checker=None, tracer: Optional[Any] = None):
+class JudgeSteps:
+    """The drop policy, sentence by sentence, as steps (spec 0009): `judge_steps` yields a `CheckSentence` effect
+    when a sentence needs a verdict, and whoever drives it sends back `{scores}` (entailment per window),
+    `{verdict}` (True, False or None) or `{error}`. The server and the browser demo share this one copy."""
+    def __init__(self, chunks: List[str], checker_name: Optional[str] = None, threshold: float = 0.5):
         self.chunks = chunks
-        self.checker = checker or effective_checker()
-        self.tracer = tracer                # the request's tracer: judge tokens go to its `grounding` layer
-        self.result = GroundingResult(checker=self.checker.name)
+        self.checker_name = checker_name
+        self.threshold = threshold
+        self.result = GroundingResult(checker=checker_name)
         self._held: List[str] = []          # short sentences waiting for a checked sentence to survive
+        self._evidence = None
 
-    def _check(self, sentence: str) -> bool:
+    def check_effect(self, sentence: str) -> dict:
+        """What a checker needs: the sentence, every window of every chunk (NLI) and the whole context (judge)."""
+        if self._evidence is None:
+            bodies = [chunk_body(c) for c in self.chunks]
+            self._evidence = ([w for b in bodies for w in windows(b)], "\n\n".join(bodies))
+        return {"effect": "CheckSentence", "sentence": sentence, "windows": self._evidence[0],
+                "context": self._evidence[1]}
+
+    def _check(self, sentence: str):
         """One sentence's verdict; a checker error or timeout fails open for the rest of this answer."""
-        if self.result.unchecked_reason or self.checker.name is None:
+        if self.result.unchecked_reason or self.checker_name is None:
             return True
         started = time.perf_counter()
-        try:
-            ok = self._verdict(plain(sentence))
-        except Exception as e:                 # fail open for this answer; try again on the next request
-            self.result.unchecked_reason = f"{type(e).__name__}: {e}"
+        reply = (yield self.check_effect(plain(sentence))) or {}
+        if "error" in reply:                   # fail open for this answer; try again on the next request
+            self.result.unchecked_reason = reply["error"]
             ok = True
         else:
             self.result.checked += 1
+            ok = (bool(reply["scores"]) and max(reply["scores"]) >= self.threshold) if "scores" in reply \
+                else reply.get("verdict")
             if ok is None:                     # an invalid judge reply keeps the sentence
                 self.result.invalid += 1
                 ok = True
         self.result.seconds += time.perf_counter() - started
         return ok
 
-    def _verdict(self, sentence: str) -> Optional[bool]:
-        """The checker's verdict; a judge's tokens go to the request's tracer as each call returns."""
-        if self.tracer is not None and hasattr(self.checker, "ask_with_usage"):
-            ok, prompt, output = self.checker.ask_with_usage(self.checker.context(self.chunks), sentence)
-            self.tracer.add_tokens("grounding", prompt, output)
-            return ok
-        return self.checker.supported(sentence, self.chunks)
-
-    def judge(self, sentence: str) -> List[str]:
-        """Sentences that may be shown now (possibly none, possibly held short ones too)."""
+    def judge_steps(self, sentence: str):
+        """Sentences that may be shown now (possibly none, possibly held short ones too), as the generator's
+        return value."""
         if is_refusal(sentence):
             self.result.model_refused = True
             return self._keep(sentence)
-        if word_count(sentence) < MIN_CHECK_WORDS and self.checker.name is not None:
+        if word_count(sentence) < MIN_CHECK_WORDS and self.checker_name is not None:
             if any(k for k in self.result.kept):
                 return self._keep(sentence)
             self._held.append(sentence)
             return []
-        if self._check(sentence):
+        if (yield from self._check(sentence)):
             released, self._held = self._held, []
             for held in released:
                 self.result.kept.append(held)
@@ -378,6 +383,42 @@ class SentenceJudge:
         """Every checked sentence was dropped: the answer becomes a refusal."""
         return bool(self.result.dropped) and not any(not is_refusal(k) for k in self.result.kept) \
             and not self.result.model_refused
+
+
+def run_steps(steps, answer):
+    """Drives a step generator to its return value, answering each effect it yields with `answer(effect)`."""
+    try:
+        effect = next(steps)
+        while True:
+            effect = steps.send(answer(effect))
+    except StopIteration as done:
+        return done.value
+
+
+def answer_check(checker, effect: dict, chunks: List[str], tracer: Optional[Any] = None) -> dict:
+    """A server checker's reply to a `CheckSentence` effect; a judge's tokens go to the request's tracer as each
+    call returns."""
+    try:
+        if tracer is not None and hasattr(checker, "ask_with_usage"):
+            ok, prompt, output = checker.ask_with_usage(effect["context"], effect["sentence"])
+            tracer.add_tokens("grounding", prompt, output)
+            return {"verdict": ok}
+        return {"verdict": checker.supported(effect["sentence"], chunks)}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+class SentenceJudge(JudgeSteps):
+    """The step judge driven by a loaded checker, so streaming can emit each approved sentence at once."""
+    def __init__(self, chunks: List[str], checker=None, tracer: Optional[Any] = None):
+        self.checker = checker or effective_checker()
+        self.tracer = tracer                # the request's tracer: judge tokens go to its `grounding` layer
+        super().__init__(chunks, checker_name=self.checker.name)
+
+    def judge(self, sentence: str) -> List[str]:
+        """Sentences that may be shown now (possibly none, possibly held short ones too)."""
+        return run_steps(self.judge_steps(sentence),
+                         lambda effect: answer_check(self.checker, effect, self.chunks, self.tracer))
 
 
 def check_answer(text: str, chunks: List[str], checker=None) -> GroundingResult:

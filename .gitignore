@@ -1,11 +1,11 @@
 # --- Local notes and working files (kept on your machine, never committed) ---
-docs/
+/docs/
 notes.md
 temp.md
 errors.md
 sample_support.md
 test-preferences.json
-scripts/
+/scripts/
 training/
 
 # --- Secrets ---
@@ -32,3 +32,11 @@ data/eval/*
 # --- macOS ---
 .DS_Store
 .claude/
+skills-lock.json
+# --- live demo (spec 0009) ---
+demo/**/node_modules/
+demo/spike/.out/
+demo/sample/.build/
+demo/sample/.build-log.txt
+demo/public/py.zip
+demo/dist/

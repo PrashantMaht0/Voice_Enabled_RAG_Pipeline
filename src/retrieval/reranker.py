@@ -1,30 +1,11 @@
 """Cross encoder reranking: the retrieved candidates are scored against the query, best first."""
 import os
-import re
 from typing import Dict, List
 
 from flashrank import Ranker, RerankRequest
 
+from src.pipeline.retrieval import rerank_text  # noqa: F401  (imported from here by older callers)
 from src.utils.config import pick
-
-# A Markdown table separator row, e.g. "|---|:---:|".
-TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
-
-
-def rerank_text(text: str) -> str:
-    """What the cross-encoder reads: Markdown table pipes become spaces and separator rows go.
-
-    ms-marco models score a pipe grid as noise, so correct table chunks fell under the
-    confidence gate (spec 0004). The chunk itself, which the LLM reads, stays Markdown.
-    """
-    lines = []
-    for line in text.splitlines():
-        if TABLE_RULE.match(line):
-            continue
-        if line.lstrip().startswith("|"):
-            line = " ".join(cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip().strip("|")))
-        lines.append(line)
-    return "\n".join(lines)
 
 
 class CrossEncoderReranker:

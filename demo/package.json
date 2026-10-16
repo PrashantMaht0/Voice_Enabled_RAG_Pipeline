@@ -1,0 +1,21 @@
+{
+  "name": "vrag-live-demo",
+  "private": true,
+  "type": "module",
+  "description": "The V-RAG live demo (spec 0009): the question pipeline in the browser, published on GitHub Pages.",
+  "scripts": {
+    "python": "node scripts/bundle_python.mjs",
+    "dev": "npm run python && vite --port 5175 --strictPort",
+    "build": "npm run python && tsc --noEmit && vite build",
+    "preview": "vite preview --port 5176 --strictPort"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.1",
+    "@mlc-ai/web-llm": "0.2.86"
+  },
+  "devDependencies": {
+    "fflate": "0.8.2",
+    "typescript": "5.9.3",
+    "vite": "7.3.7"
+  }
+}

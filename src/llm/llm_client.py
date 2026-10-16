@@ -3,14 +3,8 @@ from typing import Any, Dict, Generator, List, Optional
 
 import ollama
 
-from src.prompts.prompt_template import (
-    ANSWER_STYLES,
-    system_prompt,
-    QUERY_REWRITE_PROMPT,
-    FALLBACK_RESPONSE,
-    build_rag_context_prompt,
-    format_chat_history
-)
+from src.pipeline.prompts import answer_messages, clean_rewrite, rewrite_messages
+from src.prompts.prompt_template import ANSWER_STYLES, FALLBACK_RESPONSE
 from src.utils.config import pick
 from src.utils.metrics import token_counts
 
@@ -28,6 +22,7 @@ class LocalLLMClient:
         self.rewriter_model = pick(rewriter_model, "llm.rewriter_model", "llama3.2:1b")
         self.temperature = pick(None, "llm.temperature", 0.0)
         self.max_tokens = pick(None, "llm.max_tokens", 256)
+        self.top_p = pick(None, "llm.top_p", 0.1)
         self.answer_style = pick(None, "llm.answer_style", "full")
         if self.answer_style not in ANSWER_STYLES:
             print(f"[LLM] WARNING: unknown llm.answer_style {self.answer_style!r}, using 'full'")
@@ -43,19 +38,15 @@ class LocalLLMClient:
         if not chat_history:
             return query.strip()
 
-        formatted_history = format_chat_history(chat_history)
-        prompt = QUERY_REWRITE_PROMPT.format(history=formatted_history, query=query)
-
         try:
             response = self.client.chat(
                 model=self.rewriter_model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=rewrite_messages(query, chat_history),
                 options={"temperature": self.temperature, "num_predict": 64}
             )
             if tracer:
                 tracer.add_tokens("rewrite", *token_counts(response))
-            rewritten = response["message"]["content"].strip().strip('"')
-            return rewritten if rewritten else query
+            return clean_rewrite(response["message"]["content"], query)
         except Exception:
             return query
 
@@ -73,13 +64,7 @@ class LocalLLMClient:
             yield FALLBACK_RESPONSE
             return
 
-        system_instruction = system_prompt(self.answer_style).format(fallback=FALLBACK_RESPONSE)
-        user_content = build_rag_context_prompt(query, context_chunks)
-
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": user_content}
-        ]
+        messages = answer_messages(query, context_chunks, self.answer_style)
 
         # A failed or timed out call raises: the answer pipeline turns it into a short error with a reference,
         # instead of the error text becoming part of a cached "answer" (spec 0008, AC-11)
@@ -89,7 +74,7 @@ class LocalLLMClient:
             stream=True,
             options={
                 "temperature": self.temperature,
-                "top_p": 0.1,
+                "top_p": self.top_p,
                 "num_predict": self.max_tokens
             }
         )

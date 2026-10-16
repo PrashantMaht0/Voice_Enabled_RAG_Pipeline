@@ -2,6 +2,7 @@
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.pipeline.retrieval import gate, present
 from src.retrieval.reranker import CrossEncoderReranker
 from src.utils.config import pick
 from src.vector_db.hybrid_store import HybridStore
@@ -26,10 +27,7 @@ class HybridRetriever:
     def present_sources(self, candidates: List[Dict]) -> List[Dict]:
         """Drops chunks whose document was deleted, so it stops being cited before the rebuild finishes
         (spec 0008, AC-8). Without a corpus folder there is nothing to compare with."""
-        if not os.path.isdir(self.raw_dir):
-            return candidates
-        present = set(os.listdir(self.raw_dir))
-        return [c for c in candidates if (c.get("metadata") or {}).get("source") in present]
+        return present(candidates, os.listdir(self.raw_dir) if os.path.isdir(self.raw_dir) else None)
 
     def search_and_rerank(self, query: str, tracer: Optional[Any] = None) -> Tuple[List[str], float]:
         """(chunks that passed the gate, the top reranker score)."""
@@ -60,18 +58,4 @@ class HybridRetriever:
         if tracer: tracer.end_span("rerank", f"Cross-encoder scored {len(candidates)} chunks")
         
         # The gate: the top top_k_rerank chunks that score at least the threshold
-        valid_chunks, details = [], []
-        highest_score = 0.0
-        for i, res in enumerate(ranked_results[:self.top_k_rerank]):
-            score = float(res["score"])           # a numpy float does not serialize to JSON
-            if i == 0:
-                highest_score = score
-            if score >= self.confidence_threshold:
-                valid_chunks.append(res["chunk"])
-                meta = res.get("metadata") or {}
-                doc_hash, index = meta.get("doc_hash", ""), meta.get("chunk_index")
-                details.append({"chunk_id": f"{doc_hash[:16]}_{index}" if index is not None else None,
-                                "source": meta.get("source"), "page": meta.get("page"),
-                                "kind": meta.get("kind", "text"), "score": round(score, 4)})
-
-        return valid_chunks, highest_score, details
+        return gate(ranked_results, self.confidence_threshold, self.top_k_rerank)

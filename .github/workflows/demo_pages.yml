@@ -1,0 +1,60 @@
+name: Live demo (GitHub Pages)
+
+# Builds demo/ and publishes it to GitHub Pages (spec 0009, AC-14). The sample index, config.json and
+# results.json are committed under demo/public (built on a machine with Ollama by demo/scripts/); this job only
+# bundles the shared Python core into py.zip and builds the site.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "demo/**"
+      - "src/pipeline/**"
+      - "src/demo_index.py"
+      - "src/prompts/**"
+      - "src/utils/**"
+      - "src/verification/**"
+      - ".github/workflows/demo_pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Build the site
+        working-directory: demo
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

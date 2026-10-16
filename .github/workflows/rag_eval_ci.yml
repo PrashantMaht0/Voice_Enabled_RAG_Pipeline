@@ -28,6 +28,22 @@ jobs:
         # on disk; ragas_ci needs a local Ollama judge. Neither fits a hosted runner.
         run: pytest -m "not integration and not ragas_ci" -q
 
+  pyodide_core:
+    name: Answer core in Pyodide
+    # The browser demo runs src/pipeline in Pyodide (spec 0009); the same core tests must pass there too.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run the core tests in Pyodide
+        run: |
+          npm --prefix demo/pyodide-runner ci
+          npm --prefix demo/pyodide-runner test
+
   ragas_gate:
     name: Ragas quality gate (self-hosted / manual)
     runs-on: ubuntu-latest

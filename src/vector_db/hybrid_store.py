@@ -1,6 +1,7 @@
 """Hybrid search: dense (Qdrant) and keyword (Tantivy BM25) candidates merged by reciprocal rank fusion."""
 from typing import Dict, List
 
+from src.pipeline.retrieval import fuse
 from src.utils.config import pick
 from src.vector_db.vector_store import VectorDBManager
 
@@ -47,20 +48,5 @@ class HybridStore:
         return results
 
     def fuse(self, dense_results: List[Dict], sparse_results: List[Dict], top_k: int = 30) -> List[Dict]:
-        """Both candidate lists merged by reciprocal rank fusion, best top_k first.
-
-        Each list adds weight / (rank + 60) per chunk; `retrieval.hybrid_alpha` is the dense weight and the
-        rest goes to keywords. A chunk found by both keeps the dense copy (it has the full metadata)."""
-        if not dense_results and not sparse_results:
-            return []                     # an empty index has nothing to answer from
-        rrf_scores, pool = {}, {}
-
-        def apply_rrf(results, weight):
-            for rank, res in enumerate(results):
-                pool.setdefault(res["id"], res)
-                rrf_scores[res["id"]] = rrf_scores.get(res["id"], 0.0) + weight * (1.0 / (rank + 60))
-
-        apply_rrf(dense_results, self.hybrid_alpha)
-        apply_rrf(sparse_results, 1.0 - self.hybrid_alpha)
-        ranked = sorted(rrf_scores, key=lambda chunk_id: rrf_scores[chunk_id], reverse=True)
-        return [pool[chunk_id] for chunk_id in ranked[:top_k]]
+        """Both candidate lists merged by reciprocal rank fusion (`retrieval.hybrid_alpha` is the dense weight)."""
+        return fuse(dense_results, sparse_results, self.hybrid_alpha, top_k)
