@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from src.pipeline import core
+from src.pipeline import core, prompts
 from src.pipeline.settings import Settings
 
 CHUNK_A = "[Source: guide.pdf | Page: 4]\nThe Basic plan costs 50 dollars a month."
@@ -123,10 +123,70 @@ def test_a_failed_rewrite_searches_the_question_as_asked():
     history = [{"role": "user", "content": "Tell me about the plans."},
                {"role": "assistant", "content": "There are Basic and Premium plans."}]
 
-    events, record = run("How much is the Basic plan?", browser, history=history)
+    events, record = run("How much is it?", browser, history=history)
 
-    assert record["search_query"] == "How much is the Basic plan?"
+    assert browser.effects[0] == "Rewrite"
+    assert record["search_query"] == "How much is it?"
 
+
+# The suggested questions on the live demo, clicked one after another (the rewrite bug was found there)
+BRENT_Q = "What is the forecast Brent crude oil spot price per barrel for 2027?"
+BRENT_A = ("The forecast Brent crude oil spot price per barrel for 2027 is $84. "
+           "[Source: eia-short-term-energy-outlook-2026-10-pages-1-20.pdf | Page: 3]")
+EARNINGS_Q = "What were the 2023 median earnings of all male workers?"
+EARNINGS_A = "The 2023 median earnings of all male workers were $56,280. [Source: census-income-2023.pdf | Page: 15]"
+
+
+def test_a_question_that_already_stands_alone_skips_the_rewrite_after_any_history():
+    """The 1B rewrite model returned the previous question, citation tag and all. covers: AC-4"""
+    browser = Browser(rewrite=BRENT_Q + " [Source: eia.pdf | Page: 3]")
+    history = [{"role": "user", "content": BRENT_Q}, {"role": "assistant", "content": BRENT_A}]
+
+    events, record = run(EARNINGS_Q, browser, history=history)
+
+    assert "Rewrite" not in browser.effects
+    assert record["search_query"] == EARNINGS_Q
+
+
+@pytest.mark.parametrize("question", [
+    "And for female workers?", "What about 2026?", "How does it work?", "What was it for diesel?",
+    "Which one is cheaper?", "Female workers?", "How much is that?", "Is there a version for 2026?",
+])
+def test_a_follow_up_goes_to_the_rewrite_model(question):
+    assert prompts.refers_back(question)
+
+
+@pytest.mark.parametrize("question", [
+    BRENT_Q, EARNINGS_Q, "What percentage of people were without health insurance in 2013?",
+    "What forecasting framework does the renewable energy paper propose?", "What is an ARM template?",
+])
+def test_a_standalone_question_does_not_go_to_the_rewrite_model(question):
+    assert not prompts.refers_back(question)
+
+
+def test_the_rewrite_model_never_sees_a_citation_tag():
+    history = [{"role": "user", "content": BRENT_Q}, {"role": "assistant", "content": BRENT_A}]
+
+    content = prompts.rewrite_messages("What about 2026?", history)[0]["content"]
+
+    assert "[Source:" not in content and "Page: 3" not in content
+    assert "is $84." in content and "Follow-up Question: What about 2026?" in content
+
+
+@pytest.mark.parametrize("reply", [
+    "Brent crude oil price for 2026 [Source: eia.pdf | Page: 3]", "Brent crude oil price for 2026 (Source: eia.pdf)",
+])
+def test_a_citation_tag_in_the_rewrite_never_reaches_the_search_query(reply):
+    assert prompts.clean_rewrite(reply, "What about 2026?") == "Brent crude oil price for 2026"
+
+
+def test_a_rewrite_that_drops_the_new_subject_falls_back_to_the_question_as_asked():
+    """The browser's 1B model turned "female workers" into "male workers"."""
+    query = "And for female workers?"
+
+    assert prompts.clean_rewrite("2023 median earnings of all male workers", query) == query
+    assert prompts.clean_rewrite("2023 median earnings of all female workers", query) == (
+        "2023 median earnings of all female workers")
 
 
 def test_an_unsupported_sentence_is_dropped_by_the_scores_threshold():

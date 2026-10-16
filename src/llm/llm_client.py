@@ -3,7 +3,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 import ollama
 
-from src.pipeline.prompts import answer_messages, clean_rewrite, rewrite_messages
+from src.pipeline.prompts import answer_messages, clean_rewrite, refers_back, rewrite_messages
 from src.prompts.prompt_template import ANSWER_STYLES, FALLBACK_RESPONSE
 from src.utils.config import pick
 from src.utils.metrics import token_counts
@@ -34,8 +34,8 @@ class LocalLLMClient:
 
     def rewrite_query(self, query: str, chat_history: List[Dict[str, str]], tracer: Optional[Any] = None) -> str:
         """Rewrites conversational queries into standalone queries; the call's tokens go to the request's tracer
-        (`rewrite`) when one is given."""
-        if not chat_history:
+        (`rewrite`) when one is given. A question that already stands alone is returned unchanged."""
+        if not chat_history or not refers_back(query):
             return query.strip()
 
         try:

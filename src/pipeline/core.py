@@ -14,7 +14,7 @@ import time
 from typing import Dict, Iterable, List, Optional
 
 from src.pipeline.limits import check_history, check_query
-from src.pipeline.prompts import answer_messages, clean_rewrite, rewrite_messages
+from src.pipeline.prompts import answer_messages, clean_rewrite, refers_back, rewrite_messages
 from src.pipeline.retrieval import fuse, gate, present, rerank_text
 from src.pipeline.settings import Settings
 from src.pipeline.sources import append_citations, build_citations, kept_citations, log_citations, with_kinds
@@ -83,8 +83,9 @@ def answer(request: Dict, settings: Settings, record: Dict, docs: Optional[Itera
     history = usable_history(check_history(request.get("history") or [], settings.max_history_turns,
                                            settings.max_turn_chars))
     # Refused turns carry no subject and would drag the next question off topic (usable_history drops them).
+    # A question that already stands alone skips the rewrite model, which would turn it into the earlier one.
     search_query = query
-    if history:
+    if history and refers_back(query):
         reply, ms = yield from timed({"effect": "Rewrite", "query": query, "history": history,
                                       "messages": rewrite_messages(query, history)})
         search_query = clean_rewrite(reply, query)
