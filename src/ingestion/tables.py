@@ -251,8 +251,16 @@ def render(pdfium_page, longest_px: int):
 
 # --- the detector ---
 
+def torch_device() -> str:
+    """CUDA when present (the live demo's ZeroGPU Space, spec 0009), else MPS, else CPU."""
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
 class TableDetector:
-    """Table Transformer, loaded once per process (MPS when available, else CPU)."""
+    """Table Transformer, loaded once per process (CUDA or MPS when available, else CPU)."""
     def __init__(self, settings: Dict = None):
         self.settings = settings or detection_settings()
         self.model = None
@@ -260,14 +268,14 @@ class TableDetector:
         self.device = "cpu"
 
     def load(self):
-        """Loads the Table Transformer once (MPS when available, else CPU)."""
+        """Loads the Table Transformer once (CUDA or MPS when available, else CPU)."""
         if self.model is None:
             import torch
             from transformers import AutoImageProcessor, TableTransformerForObjectDetection
             name, revision = self.settings["model"], self.settings["revision"]
             self.processor = AutoImageProcessor.from_pretrained(name, revision=revision)
             self.model = TableTransformerForObjectDetection.from_pretrained(name, revision=revision).eval()
-            self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+            self.device = torch_device()
             self.model.to(self.device)
         return self
 
@@ -437,7 +445,7 @@ def rebuild_table(words: List[Dict]) -> Optional[str]:
 
 
 class LayoutModel:
-    """The fine tuned LayoutLMv3, loaded once per process (MPS when available, else CPU)."""
+    """The fine tuned LayoutLMv3, loaded once per process (CUDA or MPS when available, else CPU)."""
     def __init__(self):
         self.name = get("ingestion.table_model", "")
         self.revision = get("ingestion.table_model_revision", "main")
@@ -446,7 +454,7 @@ class LayoutModel:
         self.device = "cpu"
 
     def load(self):
-        """Loads the fine tuned LayoutLMv3 once (MPS when available, else CPU)."""
+        """Loads the fine tuned LayoutLMv3 once (CUDA or MPS when available, else CPU)."""
         if self.model is None:
             if not self.name:
                 raise RuntimeError("ingestion.table_model is not set")
@@ -454,7 +462,7 @@ class LayoutModel:
             from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
             self.processor = LayoutLMv3Processor.from_pretrained(self.name, revision=self.revision, apply_ocr=False)
             model = LayoutLMv3ForTokenClassification.from_pretrained(self.name, revision=self.revision).eval()
-            self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+            self.device = torch_device()
             self.model = model.to(self.device)
         return self
 

@@ -1,0 +1,40 @@
+name: Live demo PDF reader (Hugging Face Space)
+
+# Syncs the PDF reading Space from this repository (spec 0009, AC-14): space/assemble.py gathers the app, its
+# requirements, the shared ingestion code and a config.yaml made of config/config.yaml plus space overrides, and the
+# folder replaces the Space's files. Needs the repository secret HF_TOKEN (write access to the Space only).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "space/**"
+      - "src/ingestion/**"
+      - "src/utils/config.py"
+      - "config/config.yaml"
+      - ".github/workflows/space_deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: space
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SPACE_ID: Prashant-Mahto/vrag-pdf-reader
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Assemble and upload
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install --quiet "huggingface_hub>=1.0" PyYAML
+          python space/assemble.py space/.dist
+          hf upload "$SPACE_ID" space/.dist . --repo-type space --delete "*" \
+            --commit-message "Deploy from ${GITHUB_SHA::7}"

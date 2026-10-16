@@ -7,7 +7,6 @@ import json
 import os
 import threading
 import time
-import unicodedata
 import uuid
 from typing import Dict, List, Literal, Optional
 
@@ -19,7 +18,9 @@ from qdrant_client import models
 
 from src.api import guards
 from src.ingestion import figures, tables
+from src.ingestion import upload_checks
 from src.ingestion.chunking import DocumentChunker
+from src.ingestion.upload_checks import upload_name_problem  # noqa: F401  (the API's name check; tests import it here)
 from src.ingestion.loader import DocumentLoader
 from src.llm.llm_client import LocalLLMClient, generated_tokens
 from src.observability.store import TraceStore
@@ -553,44 +554,12 @@ def get_trace(trace_id: int):
     return trace
 
 
-BIDI_CONTROLS = {chr(c) for c in list(range(0x202A, 0x202F)) + list(range(0x2066, 0x206A))}
-CHUNK = 1024 * 1024
-
-
-def upload_name_problem(name: str) -> str:
-    """Why an uploaded file name is refused, or '' when it is fine (spec 0008, AC-5)."""
-    if not name or not name.lower().endswith(DOCUMENT_TYPES):
-        return "Upload a .pdf, .md or .txt file."
-    if name.startswith(".") or name != name.strip():
-        return "File names cannot start with a dot or start or end with a space."
-    if "/" in name or "\\" in name or any(unicodedata.category(c) == "Cc" or c in BIDI_CONTROLS for c in name):
-        return "File names cannot contain slashes or control characters."
-    if len(name.encode("utf-8")) > 255:
-        return "File names can be at most 255 bytes."
-    return ""
-
-
 def check_contents(path: str, name: str):
-    """The file is what its name says: a readable PDF within the page limit, or UTF-8 text."""
-    if name.lower().endswith(".pdf"):
-        with open(path, "rb") as f:
-            if f.read(5) != b"%PDF-":
-                raise HTTPException(status_code=400, detail=f"{name} is not a PDF.")
-        try:
-            from pypdf import PdfReader
-            pages = len(PdfReader(path).pages)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"{name} is not a readable PDF.")
-        if pages > int(get("upload.max_pdf_pages", 300)):
-            raise HTTPException(status_code=413, detail=f"{name} has {pages} pages; the limit is "
-                                                        f"{int(get('upload.max_pdf_pages', 300))}.")
-    else:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                while f.read(CHUNK):
-                    pass
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail=f"{name} is not UTF-8 text.")
+    """The file is what its name says (shared check, spec 0008 AC-5), as the API's HTTP error."""
+    try:
+        upload_checks.check_contents(path, name, int(get("upload.max_pdf_pages", 300)))
+    except upload_checks.UploadRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
 
 
 @router.post("/upload")
@@ -611,7 +580,7 @@ def upload_document(file: UploadFile = File(...)):
         written = 0
         with open(part, "wb") as out:
             while True:
-                block = file.file.read(CHUNK)
+                block = file.file.read(upload_checks.CHUNK)
                 if not block:
                     break
                 written += len(block)

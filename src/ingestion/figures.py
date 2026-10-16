@@ -62,6 +62,12 @@ def configured_parser() -> str:
     return str(get("ingestion.figure_parser", "none"))
 
 
+def configured_backend() -> str:
+    """How the figure model is run (`ingestion.figure_backend`): `ollama` (local) or `transformers` (the live demo's
+    ZeroGPU Space, spec 0009, where `figure_parser` is a Hugging Face model id)."""
+    return str(get("ingestion.figure_backend", "ollama"))
+
+
 def figure_settings() -> Dict:
     """Everything that decides which regions count as figures and how they are read (sizes, shape limits, image size,
     caps)."""
@@ -86,9 +92,12 @@ def check_figure_parser() -> str:
         _effective_parser = "none"
         return _effective_parser
     try:
-        if parser not in FIGURE_PARSERS:
-            raise ValueError(f"unknown figure_parser {parser!r}; expected one of {', '.join(FIGURE_PARSERS)}")
-        tables.vlm_digest(parser)
+        if configured_backend() == "transformers":
+            transformers_model(parser)            # loads it now, at startup (ZeroGPU wants models at module scope)
+        else:
+            if parser not in FIGURE_PARSERS:
+                raise ValueError(f"unknown figure_parser {parser!r}; expected one of {', '.join(FIGURE_PARSERS)}")
+            tables.vlm_digest(parser)
         _effective_parser = parser
     except Exception as e:
         print(f"[Figures] ERROR: figure_parser {parser!r} is unavailable ({e}). Indexing without figures.")
@@ -107,6 +116,8 @@ def figure_fingerprint(parser: str = None) -> str:
     if parser == "none":
         return ""
     s = figure_settings()
+    if configured_backend() != "ollama":
+        parser = f"{configured_backend()}:{parser}@{get('ingestion.figure_revision', 'main')}"
     return (f"|fig:{parser}|{s['image_px']}|{s['min_area']}|{s['aspect_min']}-{s['aspect_max']}"
             f"|{s['series_cap']}x{s['values_cap']}|{FIGURE_PROMPT_VERSION}")
 
@@ -360,9 +371,83 @@ def client():
     return _client
 
 
+_vision_models: Dict[str, tuple] = {}
+
+
+def transformers_model(model_id: str) -> tuple:
+    """(model, processor) for a Qwen2.5 VL model run with transformers, loaded once; on CUDA when present (ZeroGPU
+    moves it to the GPU inside each @spaces.GPU call)."""
+    if model_id not in _vision_models:
+        import torch
+        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+        device = tables.torch_device()
+        revision = get("ingestion.figure_revision", "main")
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_id, revision=revision, torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
+        _vision_models[model_id] = (model.to(device), AutoProcessor.from_pretrained(model_id, revision=revision))
+    return _vision_models[model_id]
+
+
+def ask_transformers(model_id: str, prompt: str, png: bytes, schema: Dict, num_predict: int) -> str:
+    """The same call with transformers: no schema constrained decoding, so the schema goes in the prompt and the
+    reply is checked as before (an invalid reply is retried once with smaller caps)."""
+    import torch
+    from PIL import Image
+    model, processor = transformers_model(model_id)
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    text = f"{prompt}\nReply with only a JSON object matching this JSON schema: {json.dumps(schema)}"
+    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
+    chat = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(text=[chat], images=[image], return_tensors="pt").to(model.device)
+    with torch.inference_mode():
+        out = model.generate(**inputs, max_new_tokens=num_predict, do_sample=False)
+    reply = processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
+    start, end = reply.find("{"), reply.rfind("}")
+    if os.environ.get("VRAG_DEBUG_FIGURES"):        # testing with public documents only: replies hold document text
+        print(f"[Figures] reply ({len(reply)} chars): {reply[:400]!r}")
+    reply = reply[start:end + 1] if 0 <= start < end else reply   # the JSON object, without fences or commentary
+    return fit_figure_reply(reply, schema) if "series" in schema.get("properties", {}) else reply
+
+
+def fit_figure_reply(reply: str, schema: Dict) -> str:
+    """Fits a transformers figure reply to the schema Ollama would have enforced (spec 0009): axis objects become
+    their label, numbers become strings, lists are trimmed to the schema's caps (keeping the most recent values, as
+    the prompt asks), and a missing summary falls back to the title. The validator stays as strict as before."""
+    try:
+        data = json.loads(reply)
+    except ValueError:
+        return reply
+    if not isinstance(data, dict):
+        return reply
+    props = schema["properties"]
+    series_cap = props["series"]["maxItems"]
+    values_cap = props["series"]["items"]["properties"]["values"]["maxItems"]
+
+    def text(value) -> str:
+        if isinstance(value, dict):
+            value = next((value[k] for k in ("label", "name", "title", "text") if isinstance(value.get(k), str)),
+                         next((v for v in value.values() if isinstance(v, str)), ""))
+        return value if isinstance(value, str) else ("" if value is None else str(value))
+
+    axes = data.get("axes") if isinstance(data.get("axes"), list) else []
+    series = data.get("series") if isinstance(data.get("series"), list) else []
+    fitted = {
+        "type": data.get("type"),
+        "title": text(data.get("title")),
+        "axes": [a for a in (text(a) for a in axes) if a][:props["axes"]["maxItems"]],
+        "series": [{"name": text(s.get("name")),
+                    "values": [text(v) for v in (s.get("values") or [])][-values_cap:]}
+                   for s in series[:series_cap] if isinstance(s, dict)],
+        "summary": text(data.get("summary")) or text(data.get("title")),
+    }
+    return json.dumps(fitted)
+
+
 def ask(model: str, prompt: str, png: bytes, schema: Dict, num_predict: int) -> str:
     """One vision model call (the crop and a prompt in, a JSON reply constrained by the schema out); the model stays
     loaded for 10 minutes."""
+    if configured_backend() == "transformers":
+        return ask_transformers(model, prompt, png, schema, num_predict)
     response = client().chat(
         model=model,
         messages=[{"role": "user", "content": prompt, "images": [png]}],
@@ -375,6 +460,8 @@ def ask(model: str, prompt: str, png: bytes, schema: Dict, num_predict: int) -> 
 
 def unload(model: str):
     """Frees the figure model's memory now instead of after Ollama's idle timeout (AC-6)."""
+    if configured_backend() != "ollama":
+        return                                   # transformers keeps the model loaded for the next document
     try:
         client().generate(model=model, prompt="", keep_alive=0)
     except Exception as e:
@@ -538,7 +625,9 @@ class FigureExtractor:
             return []
         import pypdfium2 as pdfium
         sha = tables.file_sha256(file_path)
-        figures, called = [], False
+        figures, called, reads = [], False, 0
+        # The live demo's Space reads at most this many figures per upload (spec 0009); unset means no limit
+        cap = get("ingestion.figure_max_per_document", None)
         pdf = pdfium.PdfDocument(file_path)
         try:
             for c in found:
@@ -547,7 +636,10 @@ class FigureExtractor:
                 if path and os.path.exists(path):
                     with open(path, encoding="utf-8") as f:
                         result = json.load(f)
+                elif cap is not None and reads >= int(cap):
+                    continue
                 else:
+                    reads += 1
                     png = png_bytes(crop(pdf[number - 1], c["plumber_bbox"], b, self.settings["image_px"]))
                     called = True
                     box = [round(b[k], 1) for k in ("x0", "top", "x1", "bottom")]

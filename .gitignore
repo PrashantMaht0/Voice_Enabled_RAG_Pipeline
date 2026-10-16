@@ -40,3 +40,4 @@ demo/sample/.build/
 demo/sample/.build-log.txt
 demo/public/py.zip
 demo/dist/
+space/.dist/
