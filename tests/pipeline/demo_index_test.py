@@ -107,3 +107,22 @@ def test_an_oversized_question_returns_its_reason():
     reply = json.loads(bridge.start(json.dumps({"query": "x" * 11, "history": []}), "null", False))
 
     assert reply == {"type": "error", "detail": "the question is longer than 10 characters", "end": True}
+
+
+def test_the_bridge_computes_the_dashboards_metrics_over_browser_traces():
+    """The same summarize the dashboard uses (src/observability/metrics.py). covers: AC-12"""
+    base = {"answer": None, "confidence": None, "grounding_checker": None, "sentences_dropped": None,
+            "total_ms": None, "first_sentence_ms": None, "stt_ms": None, "first_audio_ms": None,
+            "spoken_total_ms": None, "prompt_tokens": None, "output_tokens": None}
+    rows = [{**base, "id": 1, "path": "answered", "answer": "It is $84.", "confidence": 0.99, "total_ms": 7000,
+             "first_sentence_ms": 5000, "prompt_tokens": 2000, "output_tokens": 20},
+            {**base, "id": 2, "path": "gated", "confidence": 0.1, "total_ms": 2000},
+            {**base, "id": 3, "path": "error"}]
+    spans = [{"trace_id": 1, "layer": "rerank", "elapsed_ms": 800}, {"trace_id": 2, "layer": "rerank", "elapsed_ms": 900}]
+
+    m = json.loads(bridge.metrics(json.dumps(rows), json.dumps(spans)))
+
+    assert m["counts"]["asked"] == 3 and m["counts"]["answered"] == 1 and m["counts"]["errors"] == 1
+    assert m["rates"]["retrieval_pass_rate"] == 0.5 and m["rates"]["refusal_rate"] == 0.5
+    assert m["stages"]["rerank"] == {"p50": 800, "p95": 800, "p99": 800, "n": 1}
+    assert m["tokens"]["total"] == 2020 and m["latency"]["p50"] == 7000

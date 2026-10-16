@@ -6,6 +6,7 @@ import json
 import random
 
 from src.demo_index import DemoIndex
+from src.observability.metrics import summarize
 from src.pipeline import core
 from src.pipeline.limits import QuestionTooLarge
 from src.pipeline.settings import Settings
@@ -35,6 +36,11 @@ def add_doc(name: str, chunks_json: str, vectors) -> None:
 
 def remove_doc(name: str) -> None:
     index.remove_doc(name)
+
+
+def metrics(rows_json: str, spans_json: str) -> str:
+    """The Observability tab's numbers: the dashboard's own summarize over the browser's saved traces."""
+    return json.dumps(summarize(json.loads(rows_json), json.loads(spans_json)))
 
 
 def start(request_json: str, docs_json: str, grounding: bool) -> str:

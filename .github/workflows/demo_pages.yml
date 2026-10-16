@@ -1,7 +1,7 @@
 name: Live demo (GitHub Pages)
 
 # Builds demo/ and publishes it to GitHub Pages (spec 0009, AC-14). The sample index, config.json and
-# results.json are committed under demo/public (built on a machine with Ollama by demo/scripts/); this job only
+# suggested answers are committed under demo/public (built on a machine with Ollama by demo/scripts/); this job only
 # bundles the shared Python core into py.zip and builds the site.
 on:
   push:

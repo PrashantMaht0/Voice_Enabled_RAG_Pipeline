@@ -20,20 +20,22 @@ export class Driver {
   constructor(private python: WorkerRpc, private models: WorkerRpc, private engine: MLCEngineInterface,
               private settings: Settings) {}
 
-  async ask(question: Question, handlers: Handlers): Promise<void> {
+  /** Runs one question; resolves with the core's record (path, answer, confidence, …), or null after an error. */
+  async ask(question: Question, handlers: Handlers): Promise<Record<string, any> | null> {
     this.stopped = false;
     this.usage = { prompt_tokens: null, output_tokens: null };
     const request = JSON.stringify({ query: question.query, history: question.history, channel: "typed" });
     let item = JSON.parse(await this.python.call<string>("start",
       { request, docs: JSON.stringify(question.docs), grounding: question.grounding }));
     while (!item.end) {
-      if (this.stopped) return;
+      if (this.stopped) return null;
       let result: unknown = null;
       if (item.effect) result = await this.perform(item, handlers);
       else handlers.onEvent(item);
       item = JSON.parse(await this.python.call<string>("step", { result: JSON.stringify(result ?? null) }));
     }
     if (item.type === "error") handlers.onEvent(item);
+    return item.record ?? null;
   }
 
   async stop(): Promise<void> {

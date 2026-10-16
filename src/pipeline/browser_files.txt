@@ -17,3 +17,5 @@ src/verification/__init__.py
 src/verification/citations.py
 src/verification/grounding.py
 src/demo_index.py
+src/observability/__init__.py
+src/observability/metrics.py

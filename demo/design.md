@@ -19,12 +19,15 @@ The demo should feel like the same product as your local dashboard, moved into a
   them and cited."), and a status line on the right (model state, "runs on your GPU").
 - A model card under the header until the models are loaded: the model picker with download sizes, the Load button,
   and one progress row per part (answer model, search models, Python core).
-- Tabs, as on the dashboard: Ask, Documents, Trace, Results.
-  - Ask: a wide chat column (suggested question chips above an empty chat, the conversation, the question box with
-    Ask and Stop), and a side column with the last answer's sources.
-  - Documents: one card per sample document (title, publisher, license, source link, pages).
-  - Trace: the recent questions, and the selected one's steps in the dark monospace panel with timings.
-  - Results: the slate metric cards and the measured table.
+- Tabs, exactly the dashboard's three: Ask, Documents, Observability (changed 2026-10-16).
+  - Ask: a wide chat column (suggested question chips, the conversation, the question box with Ask, Stop and
+    Clear chat); a side column with the five slate metric cards (Confidence, Grounded, Retrieval, Total, First
+    audio) and the retrieved sources; below both, full width and always open, the pipeline trace in the dark
+    monospace panel, so the pipeline is visible on the same page.
+  - Documents: on the left the sample documents' licenses and sources (upload and remove join here with the PDF
+    reader); on the right the corpus table (file, pages, chunks by kind, status).
+  - Observability: the window selector and Refresh, the ten slate cards in two rows of five, the recent questions
+    table with the selected trace beside it, and the stage table.
 - Footer: privacy line (what runs where) and links to the repository and licenses.
 
 ## Components

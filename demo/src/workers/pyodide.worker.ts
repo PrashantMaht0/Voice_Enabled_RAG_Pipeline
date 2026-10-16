@@ -31,6 +31,8 @@ self.onmessage = async (event: MessageEvent<Call>) => {
       reply(id, { result: bridge.start(args.request, args.docs, args.grounding) });
     } else if (op === "step") {
       reply(id, { result: bridge.step(args.result) });
+    } else if (op === "metrics") {
+      reply(id, { result: bridge.metrics(args.rows, args.spans) });
     } else if (op === "stop") {
       bridge?.stop();
       reply(id, { result: null });

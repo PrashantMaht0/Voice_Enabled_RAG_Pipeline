@@ -67,17 +67,29 @@ def latest_quality(benchmarks_dir: Path = BENCHMARKS_DIR) -> Optional[Dict]:
 
 def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -> Dict:
     """The metrics block `GET /api/metrics` returns for a window: counts per path, rates, stage and voice percentiles
-    for answered requests, failed writes and the latest quality card.
-
-    A cache hit counts as answered unless the cached answer was a refusal; errors and aborted requests are left out of
-    the rates."""
+    for answered requests, failed writes and the latest quality card."""
     start = since(window)
     where, params = ("WHERE path != 'in_progress'" + (" AND created_at >= ?" if start else "")), \
         ((start,) if start else ())
     rows = [dict(r) for r in store.query(
         f"SELECT id, path, answer, confidence, grounding_checker, sentences_dropped, total_ms, first_sentence_ms, "
         f"stt_ms, first_audio_ms, spoken_total_ms, prompt_tokens, output_tokens FROM traces {where}", params)]
+    answered_ids = [r["id"] for r in rows if r["path"] == "answered"]
+    spans = []
+    if answered_ids:
+        marks = ",".join("?" * len(answered_ids))
+        spans = [dict(s) for s in store.query(
+            f"SELECT trace_id, layer, elapsed_ms FROM spans WHERE trace_id IN ({marks})", answered_ids)]
+    return {"window": window, **summarize(rows, spans),
+            "failed_writes": store.failed_writes, "quality": latest_quality(benchmarks_dir)}
 
+
+def summarize(rows: List[Dict], spans: List[Dict]) -> Dict:
+    """Counts, rates, stage, voice and latency percentiles and tokens over trace rows and their spans
+    (`{trace_id, layer, elapsed_ms}`). Pure, so the browser demo runs the same rules in Pyodide (spec 0009).
+
+    A cache hit counts as answered unless the cached answer was a refusal; errors and aborted requests are left out of
+    the rates."""
     cache = [r for r in rows if r["path"] == "cache"]
     cache_refused = [r for r in cache if is_refusal(r["answer"] or "")]
     count = lambda path: sum(r["path"] == path for r in rows)
@@ -114,15 +126,13 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
               "per_question": round((prompt + output) / len(counted)) if counted else None,
               "counted": len(counted), "asked": len(rows)}
 
-    answered_ids = [r["id"] for r in rows if r["path"] == "answered"]
+    answered_ids = {r["id"] for r in rows if r["path"] == "answered"}
+    answered_spans = [s for s in spans if s["trace_id"] in answered_ids]
     stages = {}
-    if answered_ids:
-        marks = ",".join("?" * len(answered_ids))
-        spans = store.query(f"SELECT layer, elapsed_ms FROM spans WHERE trace_id IN ({marks})", answered_ids)
-        for layer in STAGE_LAYERS:
-            values = [s["elapsed_ms"] for s in spans if s["layer"] == layer]
-            if values:
-                stages[layer] = percentiles(values)
+    for layer in STAGE_LAYERS:
+        values = [s["elapsed_ms"] for s in answered_spans if s["layer"] == layer]
+        if values:
+            stages[layer] = percentiles(values)
     answered_rows = [r for r in rows if r["path"] == "answered"]
     for field in ("first_sentence_ms", "total_ms"):
         stages[field] = percentiles([r[field] for r in answered_rows if r[field] is not None])
@@ -131,8 +141,7 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
     latency = percentiles([r["total_ms"] for r in answered_rows if r["total_ms"] is not None])
     latency.pop("p95")
 
-    return {"window": window, "counts": counts, "rates": rates, "stages": stages, "voice": voice,
+    return {"counts": counts, "rates": rates, "stages": stages, "voice": voice,
             "retrieval": {"reached": len(reached), "passed": passed_gate},
             "grounding": {"checked": len(checked), "passed": passed_check},
-            "latency": latency, "tokens": tokens,
-            "failed_writes": store.failed_writes, "quality": latest_quality(benchmarks_dir)}
+            "latency": latency, "tokens": tokens}
