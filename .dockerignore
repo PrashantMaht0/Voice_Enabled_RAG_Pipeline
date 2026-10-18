@@ -1,0 +1,10 @@
+# Allowlist: the image gets the app code and nothing else.
+# No .env, documents, index, model weights, virtualenvs, notes or git history.
+*
+!src/
+!config/
+!app.py
+!main.py
+!requirements.txt
+**/__pycache__
+**/*.pyc

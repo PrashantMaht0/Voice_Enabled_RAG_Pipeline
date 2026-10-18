@@ -1,10 +1,11 @@
 # --- API & frontend ---
 fastapi==0.141.1
 uvicorn==0.52.3
-python-multipart==0.0.32        
+python-multipart==0.0.32        # FastAPI needs it to accept uploaded files
 gradio==5.50.0
 pydantic==2.12.3
 requests==2.34.2
+urllib3==2.8.0                    # pinned above requests' floor: 2.7.0 had three advisories
 
 # --- LLM client ---
 ollama==0.6.2
@@ -17,22 +18,26 @@ tantivy==0.26.0
 sentence-transformers==6.0.0
 FlashRank==0.2.10
 
-# --- Voice: VAD, STT, TTS ---
+# --- Voice: speech to text and text to speech ---
 torch==2.13.0
-torchaudio==2.11.0              
+torchvision==0.28.0              # pulled in by timm; must match torch, see Dockerfile
 faster-whisper==1.2.1
 kokoro-onnx==0.5.0
-onnxruntime==1.29.0
-soundfile==0.14.0
+onnxruntime==1.29.0              # runs the Kokoro voice model
 librosa==1.0.0
 numpy==2.5.2
 
 # --- Document ingestion & chunking ---
-pypdf==6.16.1
+pypdf==6.19.0
 tiktoken==0.14.0
 
-# --- Guardrails (spacy model installed separately, see header) ---
-spacy==3.8.15
+# --- Tables in PDFs ---
+# pdfplumber stays at 0.11.9: 0.11.10 needs Pillow 12.2+, and gradio 5.50 needs Pillow below 12.
+pdfplumber==0.11.9
+pypdfium2==5.14.0
+pytesseract==0.3.13
+timm==1.0.30                     # Table Transformer backbone
+transformers==5.15.0             # already pulled in by sentence-transformers; pinned for the detector
 
 # --- Configuration ---
 PyYAML==6.0.3
@@ -41,26 +46,5 @@ PyYAML==6.0.3
 pytest==9.1.1
 
 
-# =============================================================================
-# EVALUATION EXTRAS — INSTALL IN A SEPARATE VIRTUALENV, NOT THIS ONE.
-# =============================================================================
-# Ragas pulls langchain 0.3.x; the versions above are a langchain-1.x-era stack.
-# Installing both together downgrades langchain-core and breaks ragas' own
-# imports, so the quality gate gets its own environment:
-#
-#   python -m venv eval-env
-#   ./eval-env/bin/pip install ragas==0.2.15 langchain==0.3.30 \
-#       langchain-core==0.3.86 langchain-community==0.3.27 \
-#       langchain-openai==0.2.14 langchain-ollama==0.2.3 pytest requests
-#
-#   ./eval-env/bin/python -m pytest tests/eval_test.py -m ragas_ci -q -s
-#
-# Pinned versions used by the passing gate:
-#   ragas==0.2.15
-#   langchain==0.3.30
-#   langchain-core==0.3.86
-#   langchain-community==0.3.27
-#   langchain-openai==0.2.14
-#   langchain-ollama==0.2.3
-#   datasets==5.0.1
-#   pandas==3.0.5
+# Evaluation (Ragas quality gate): installed in its own virtualenv, never this one, because
+# ragas needs langchain 0.3.x. The pinned list is in the README ("Run the quality tests").

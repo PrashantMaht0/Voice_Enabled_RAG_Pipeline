@@ -1,0 +1,7 @@
+# The Space's differences from config/config.yaml; assemble.py merges them into config.yaml.
+ingestion:
+  figure_backend: transformers
+  figure_parser: Qwen/Qwen2.5-VL-3B-Instruct
+  figure_revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
+  figure_max_per_document: 4         # 5 pages and 4 figures fit a visitor's daily ZeroGPU allowance (measured)
+  table_cache: false               # nothing of a visitor's file is kept on disk

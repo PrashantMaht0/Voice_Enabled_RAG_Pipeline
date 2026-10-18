@@ -9,6 +9,7 @@ CONFIG_PATH = os.environ.get("VRAG_CONFIG", "config/config.yaml")
 
 @lru_cache(maxsize=1)
 def load_config(path: str = CONFIG_PATH) -> dict:
+    """The parsed config file (read once and cached); an empty dict when the file is missing."""
     if not os.path.exists(path):
         print(f"[Config] {path} not found — falling back to built-in defaults.")
         return {}

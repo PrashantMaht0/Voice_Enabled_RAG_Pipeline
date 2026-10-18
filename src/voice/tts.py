@@ -1,8 +1,18 @@
+"""Text to speech with Kokoro 82M (ONNX), run locally.
+
+Without kokoro-onnx or the weights in ./models the model is None (mock mode): every sentence becomes half a
+second of silence, so the app still answers in text and the latency benchmark skips voice."""
+import importlib.metadata
+import os
+import shutil
+import tempfile
+
 import numpy as np
 
 try:
+    import espeakng_loader
     import kokoro_onnx
-    import soundfile as sf
+    from kokoro_onnx.config import EspeakConfig
     KOKORO_INSTALLED = True
 except ImportError:
     KOKORO_INSTALLED = False
@@ -10,10 +20,35 @@ except ImportError:
 from src.utils.audio_utils import float32_to_int16
 from src.utils.config import pick
 
+# espeak-ng (inside espeakng-loader) ignores a data folder whose real path is 160+ characters (it resolves
+# symlinks), falls back to the path it was built with, and exits the whole process. A venv in a deep folder
+# hits this, so a copy of the data (about 19 MB) is made once in a short temp folder.
+ESPEAK_PATH_LIMIT = 160
+
+
+def espeak_data_path() -> str:
+    """espeak-ng's data folder, or a short copy of it when the real path is too long for espeak-ng."""
+    path = espeakng_loader.get_data_path()
+    if len(os.path.realpath(path)) < ESPEAK_PATH_LIMIT:
+        return path
+    version = importlib.metadata.version("espeakng-loader")
+    short = os.path.join(tempfile.gettempdir(), f"vrag-espeak-ng-data-{version}")
+    if len(os.path.realpath(short)) >= ESPEAK_PATH_LIMIT:
+        raise RuntimeError(f"the temp folder path is too long for espeak-ng too: {short}")
+    if not os.path.exists(os.path.join(short, "phontab")):
+        shutil.rmtree(short, ignore_errors=True)   # a broken leftover, e.g. after a temp cleaner
+        partial = f"{short}.{os.getpid()}"
+        shutil.copytree(path, partial, dirs_exist_ok=True)
+        try:
+            os.replace(partial, short)          # atomic, so a parallel process never sees half a copy
+        except OSError:
+            shutil.rmtree(partial, ignore_errors=True)   # another process finished first
+    return short
+
+
 class KokoroTTS:
-    """
-    Ultra-low latency streaming Text-to-Speech using the Kokoro-82M ONNX model.
-    """
+    """Kokoro 82M via ONNX (`voice.tts.*` in config.yaml): English text in, 24 kHz speech out."""
+
     def __init__(self, model_path: str = None, voices_path: str = None, default_voice: str = None):
         model_path = pick(model_path, "voice.tts.model_path", "models/kokoro-v1.0.onnx")
         voices_path = pick(voices_path, "voice.tts.voices_path", "models/voices-v1.0.bin")
@@ -24,16 +59,22 @@ class KokoroTTS:
         if KOKORO_INSTALLED:
             print("[TTS] Loading Kokoro-82M ONNX model...")
             try:
-                # Initialize the ONNX session
-                self.model = kokoro_onnx.Kokoro(model_path, voices_path)
+                espeak_config = EspeakConfig(data_path=espeak_data_path())
+            except Exception as e:
+                # Skip Kokoro rather than let espeak-ng exit the whole process on a bad path
+                print(f"[TTS] espeak data copy failed: {e}")
+                return
+            try:
+                self.model = kokoro_onnx.Kokoro(model_path, voices_path, espeak_config=espeak_config)
             except Exception as e:
                 print(f"[TTS] Failed to load Kokoro ONNX model: {e}")
-                print("[TTS] Download the weights into ./models — see README.")
+                print("[TTS] Download the weights into ./models (see the README).")
         else:
             print("[TTS] WARNING: kokoro-onnx not installed. Running in mock mode.")
 
     def synthesize_array(self, text: str, voice: str = None):
-        """Synthesizes speech and returns (sample_rate, int16 array)."""
+        """(sample rate, int16 samples) for the text: empty for blank text, half a second of silence in mock
+        mode. Call it from one thread only, since it updates self.sample_rate."""
         if not text.strip():
             return self.sample_rate, np.zeros(0, dtype=np.int16)
 

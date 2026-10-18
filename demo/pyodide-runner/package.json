@@ -1,0 +1,8 @@
+{
+  "name": "vrag-pyodide-runner",
+  "private": true,
+  "type": "module",
+  "description": "Runs the shared answer core's tests inside Pyodide, the runtime the browser demo uses.",
+  "scripts": { "test": "node run.mjs" },
+  "dependencies": { "pyodide": "314.0.7" }
+}

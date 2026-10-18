@@ -1,0 +1,30 @@
+# The live demo's sample corpus. Every document here may be redistributed; the page lists each
+# one with its license and source link. Picked and checked on 2026-10-16.
+documents:
+  - name: census-health-insurance-2023.pdf
+    title: "Health Insurance Coverage in the United States: 2023 (P60-284)"
+    publisher: U.S. Census Bureau
+    license: Public domain (a work of the U.S. federal government)
+    source_url: https://www2.census.gov/library/publications/2024/demo/p60-284.pdf
+    pages_used: all (28)
+
+  - name: arxiv-2507.04087-renewable-energy-mix.pdf
+    title: "Forecasting the U.S. Renewable-Energy Mix with an ALR-BDARMA Compositional Time-Series Framework"
+    publisher: Harrison Katz and Thomas Maierhofer, arXiv 2507.04087
+    license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), unchanged
+    source_url: https://arxiv.org/abs/2507.04087
+    pages_used: all (26)
+
+  - name: census-income-2023-pages-1-25.pdf
+    title: "Income in the United States: 2023 (P60-282), pages 1 to 25"
+    publisher: U.S. Census Bureau
+    license: Public domain (a work of the U.S. federal government)
+    source_url: https://www2.census.gov/library/publications/2024/demo/p60-282.pdf
+    pages_used: 1 to 25 of 59
+
+  - name: eia-short-term-energy-outlook-2026-10-pages-1-20.pdf
+    title: "Short-Term Energy Outlook, October 2026, pages 1 to 20"
+    publisher: U.S. Energy Information Administration
+    license: Public domain (EIA copyright and reuse policy, https://www.eia.gov/about/copyrights_reuse.php)
+    source_url: https://www.eia.gov/outlooks/steo/
+    pages_used: 1 to 20 of 60

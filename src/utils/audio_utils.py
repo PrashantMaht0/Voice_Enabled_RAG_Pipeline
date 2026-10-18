@@ -1,32 +1,21 @@
+"""Audio format helpers: resampling and conversion between 16 bit PCM and float samples."""
 import numpy as np
 
+
 def resample_audio(audio_data: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
-    """Resamples audio to the target sample rate."""
+    """The audio at target_sr (Whisper expects 16 kHz); unchanged when the rates already match."""
     if orig_sr == target_sr:
         return audio_data
-        
-    try:
-        import librosa
-        # librosa is preferred for high-quality audio resampling
-        return librosa.resample(audio_data, orig_sr=orig_sr, target_sr=target_sr)
-    except ImportError:
-        # Fallback to standard linear interpolation if librosa isn't installed
-        duration = len(audio_data) / orig_sr
-        target_length = int(duration * target_sr)
-        
-        return np.interp(
-            np.linspace(0.0, 1.0, target_length),
-            np.linspace(0.0, 1.0, len(audio_data)),
-            audio_data
-        ).astype(audio_data.dtype)
+    import librosa                        # imported here: it is slow to import and only voice needs it
+    return librosa.resample(audio_data, orig_sr=orig_sr, target_sr=target_sr)
+
 
 def int16_to_float32(audio_data: np.ndarray) -> np.ndarray:
-    """Converts 16-bit PCM audio to 32-bit float."""
-    # Normalize by dividing by the maximum 16-bit integer value
+    """16 bit PCM samples as floats in [-1, 1)."""
     return audio_data.astype(np.float32) / 32768.0
 
+
 def float32_to_int16(audio_data: np.ndarray) -> np.ndarray:
-    """Converts 32-bit float audio to 16-bit PCM."""
-    # Clip to prevent distortion/clipping, then scale up
+    """Float samples as 16 bit PCM, clipped to [-1, 1] first so loud audio does not wrap around."""
     clipped = np.clip(audio_data, -1.0, 1.0)
     return (clipped * 32767).astype(np.int16)

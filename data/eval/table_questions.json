@@ -1,0 +1,408 @@
+{
+  "pdf_dir": "data/eval/table_pdfs",
+  "documents": [
+    {
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "url": "https://github.com/vijaysparmar/Azure/raw/master/Microsoft%20Azure%20Essentials%20Fundamentals%20of%20Azure%202nd%20ed%20pdf.pdf",
+      "sha256": "fcb71e493a8b61def80f4535b54cd028388b9c33ae1f11c8a625eafc2968f1a1"
+    },
+    {
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "url": "https://datasheets.raspberrypi.com/rpi4/raspberry-pi-4-datasheet.pdf",
+      "sha256": "8febd042d004c7a2897a60fe6e1b2c007a941c3c4119f4fb791dc0afb669a860"
+    }
+  ],
+  "table_pages": [
+    {
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 118,
+      "bbox": [
+        83.3,
+        126.2,
+        522.9,
+        222.4
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 174,
+      "bbox": [
+        84.3,
+        343.3,
+        517.0,
+        579.6
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 187,
+      "bbox": [
+        84.6,
+        265.1,
+        492.2,
+        342.1
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "bbox": [
+        85.4,
+        89.5,
+        523.6,
+        307.4
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 2,
+      "bbox": [
+        112.8,
+        134.1,
+        476.8,
+        186.2
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 8,
+      "bbox": [
+        159.7,
+        655.5,
+        434.6,
+        686.6
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 9,
+      "bbox": [
+        76.0,
+        107.8,
+        515.0,
+        289.0
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 9,
+      "bbox": [
+        78.3,
+        386.4,
+        512.2,
+        440.6
+      ],
+      "bbox_source": "detector"
+    },
+    {
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "bbox": [
+        77.3,
+        134.7,
+        514.8,
+        655.8
+      ],
+      "bbox_source": "detector"
+    }
+  ],
+  "questions": [
+    {
+      "id": "t001",
+      "question": "What is the DTU value for the S2 performance level in the Standard tier?",
+      "expected": [
+        "50"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 174,
+      "reviewed": true
+    },
+    {
+      "id": "t002",
+      "question": "What is the DTU value for the P11 performance level in the Premium tier?",
+      "expected": [
+        "1,750"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 174,
+      "reviewed": true
+    },
+    {
+      "id": "t003",
+      "question": "What is the Geo-Restore RPO for the Basic tier?",
+      "expected": [
+        "< 1 hour"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 187,
+      "reviewed": true
+    },
+    {
+      "id": "t004",
+      "question": "What is the Geo-Restore ERT for the Premium tier?",
+      "expected": [
+        "< 12 hours"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 187,
+      "reviewed": true
+    },
+    {
+      "id": "t005",
+      "question": "What is the Active Geo-Replication RPO for the Premium tier?",
+      "expected": [
+        "< 5 seconds"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 187,
+      "reviewed": true
+    },
+    {
+      "id": "t006",
+      "question": "What is the name of the tool for managing Azure Storage?",
+      "expected": [
+        "Microsoft Azure Storage Explorer"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "reviewed": true
+    },
+    {
+      "id": "t007",
+      "question": "What is the name of the tool for managing Azure Virtual Machines?",
+      "expected": [
+        "Microsoft System Center"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "reviewed": true
+    },
+    {
+      "id": "t008",
+      "question": "What is the name of the tool for managing Azure Service Bus?",
+      "expected": [
+        "Service Bus Explorer"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "reviewed": true
+    },
+    {
+      "id": "t009",
+      "question": "What is the release date of the first release?",
+      "expected": [
+        "21/06/2019"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 2,
+      "reviewed": true
+    },
+    {
+      "id": "t011",
+      "question": "What is the release date of the 1.1 release?",
+      "expected": [
+        "12/03/2024"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 2,
+      "reviewed": true
+    },
+    {
+      "id": "t012",
+      "question": "What is the maximum value of VIN?",
+      "expected": [
+        "6.0 V"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 8,
+      "reviewed": true
+    },
+    {
+      "id": "t013",
+      "question": "What is the maximum input low voltage (VIL) at VDD IO = 3.3 V?",
+      "expected": [
+        "0.8 V"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 9,
+      "reviewed": true
+    },
+    {
+      "id": "t014",
+      "question": "What is the maximum input leakage current?",
+      "expected": [
+        "10 µA"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 9,
+      "reviewed": true
+    },
+    {
+      "id": "t016",
+      "question": "What is the maximum pull-up resistor value?",
+      "expected": [
+        "73 kΩ"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 9,
+      "reviewed": true
+    },
+    {
+      "id": "t017",
+      "question": "What is the minimum output low current (IOL) at VDD IO = 3.3 V?",
+      "expected": [
+        "7 mA"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 9,
+      "reviewed": true
+    },
+    {
+      "id": "t018",
+      "question": "What is the default pin pull state for GPIO 0?",
+      "expected": [
+        "High"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t019",
+      "question": "What is the ALT0 function of GPIO 4?",
+      "expected": [
+        "GPCLK0"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t020",
+      "question": "What is the maximum database size for the Standard tier?",
+      "expected": [
+        "250 GB"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 174,
+      "reviewed": true
+    },
+    {
+      "id": "t021",
+      "question": "How many DTUs does the Premium P6 performance level provide?",
+      "expected": [
+        "1,000"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 174,
+      "reviewed": true
+    },
+    {
+      "id": "t022",
+      "question": "How many DTUs does the Standard S3 performance level provide?",
+      "expected": [
+        "100"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 174,
+      "reviewed": true
+    },
+    {
+      "id": "t023",
+      "question": "Which tool is listed for managing Azure SQL Database?",
+      "expected": [
+        "SQL Server Management Studio"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "reviewed": true
+    },
+    {
+      "id": "t024",
+      "question": "Which tool is listed for the Azure Management APIs?",
+      "expected": [
+        "Microsoft Azure Management Library"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "reviewed": true
+    },
+    {
+      "id": "t025",
+      "question": "Besides Microsoft Azure Storage Explorer, which command line tool is listed for Azure Storage?",
+      "expected": [
+        "AzCopy"
+      ],
+      "file": "9781509302963_Microsoft Azure Essentials Fundamentals of Azure 2nd ed pdf.pdf",
+      "page": 224,
+      "reviewed": true
+    },
+    {
+      "id": "t026",
+      "question": "What is the default pull state of GPIO 9?",
+      "expected": [
+        "Low"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t027",
+      "question": "What is the ALT0 function of GPIO 14?",
+      "expected": [
+        "TXD0"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t028",
+      "question": "What is the ALT0 function of GPIO 18?",
+      "expected": [
+        "PCM CLK"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t029",
+      "question": "What is the ALT5 function of GPIO 20?",
+      "expected": [
+        "GPCLK0"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t030",
+      "question": "What is the ALT2 function of GPIO 12?",
+      "expected": [
+        "DPI D8"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    },
+    {
+      "id": "t031",
+      "question": "What is the ALT4 function of GPIO 22?",
+      "expected": [
+        "ARM TRST"
+      ],
+      "file": "raspberry-pi-4-datasheet.pdf",
+      "page": 11,
+      "reviewed": true
+    }
+  ]
+}

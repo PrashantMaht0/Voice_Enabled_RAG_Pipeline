@@ -1,25 +1,14 @@
-system:
-  environment: "development"
-  log_level: "INFO"
-  host: "0.0.0.0"
-  port: 8000
-
 # --- Paths ---
 paths:
-  raw_data_dir: "data/raw"
-  eval_data_dir: "data/eval"
+  raw_data_dir: "data/raw"          # your documents; the API and ingestion both read them from here
   qdrant_storage: "./vectordb/qdrant_storage"
   tantivy_index: "./vectordb/tantivy_index"
   collection_name: "vocal_rag_docs"
 
 # --- Voice Processing Parameters ---
 voice:
-  vad:
-    threshold: 0.5
-    min_silence_duration_ms: 400
-  default_language: "english"
   stt:
-    model: "base.en"               # faster-whisper id; "distil-whisper-v3" does not exist
+    model: "base.en"               # a faster-whisper model id
     device: "cpu"
     compute_type: "int8"
     language: "en"
@@ -27,43 +16,32 @@ voice:
     model_path: "models/kokoro-v1.0.onnx"
     voices_path: "models/voices-v1.0.bin"
     voice: "af_bella"
-
-  # Per-language overrides. Retrieval stays English regardless: the corpus,
-  # BM25 tokenizer and bge-small-en embeddings are all English-only, so a
-  # non-English query is normalised to English before it reaches the index.
-  languages:
-    english:
-      label: "English"
-      stt_model: "base.en"
-      stt_language: "en"
-      tts_backend: "kokoro"
-      normalize_query: false
-    hinglish:
-      label: "Hinglish (Hindi + English)"
-      # CTranslate2 build of shunyalabs/zero-stt-hinglish (whisper-medium fine-tune).
-      # Transcription is excellent on code-switched speech; base.en returns nonsense.
-      stt_model: "models/zero-stt-hinglish-ct2"
-      stt_language: null           # auto-detect: the audio is code-switched
-      # Answers are generated in English (the corpus and index are English-only), so
-      # they are spoken with Kokoro. Set this to "f5" to use the Hinglish voice —
-      # it is wired and loads, but its output is not intelligible. See README.
-      tts_backend: "kokoro"
-      normalize_query: true
-      f5:
-        ckpt_file: "models/F5-TTS-Hinglish/model_last.pt"
-        vocab_file: "models/F5-TTS-Hinglish/vocab.txt"
-        ref_audio: "models/hinglish_ref.wav"
-        ref_text_file: "models/hinglish_ref.txt"
-        # Flow-matching steps. Measured on this CPU: 32 -> RTF 11.6x, 16 -> 5.8x, 8 -> 2.9x.
-        # Kokoro sits at 0.47x for comparison, so Hinglish speech is inherently slow here.
-        nfe_step: 16
+  no_speech_threshold: 0.6         # a recording whose every segment is more likely silence is not sent
 
 # --- Ingestion & Chunking ---
 # Changing these requires re-running ingestion; the index is built with them.
 ingestion:
   chunk_size: 512
   chunk_overlap: 64
-  normalize_unicode: true
+  # Tables in PDFs. "none" skips detection entirely, so ingestion is as fast as before.
+  table_parser: "layoutlmv3"       # benchmark winner 2026-10-08 (22 of 29 vs 9 for none); none | pdfplumber | qwen2.5vl:3b | qwen2.5vl:7b | layoutlmv3
+  table_detector_model: "microsoft/table-transformer-detection"
+  table_detector_revision: "2357cbe2b5a5d1c03e54f32764f06058933b65ab"
+  table_detect_threshold: 0.99     # Table Transformer score a page needs to count as a table page
+  table_model: "Prashant-Mahto/layoutlmv3-pubtables-table-words"   # fine tuned LayoutLMv3 (CC BY-NC-SA 4.0)
+  table_model_revision: "5511c0fbae3ea1ebd5766c6879a7dd96ea8e6e12"
+  table_timeout_s: 120             # per page, VLM readers only
+  table_cache: true                # cache detection results, table reads and figure reads beside the index
+  # Charts and diagrams in PDFs. "none" skips every figure step, so ingestion is as fast as before.
+  figure_parser: "qwen2.5vl:7b"    # sweep winner 2026-10-09 (11 of 31 figure answers vs 4 for none); none | qwen2.5vl:3b | qwen2.5vl:7b
+  figure_min_area: 0.08            # share of the page a candidate must cover
+  figure_aspect_min: 0.3           # width over height limits for a candidate
+  figure_aspect_max: 3.5
+  figure_image_px: 800             # longest side of the crop the vision model reads
+  figure_series_cap: 4             # at most this many series per figure
+  figure_values_cap: 8             # at most this many values per series
+  figure_timeout_s: 240            # per vision call; a cold 600 token reply after an unload can take about 115 s
+  figure_unload: true              # unload the figure model after each PDF so it holds no memory while serving
 
 # --- Retrieval & Reranking ---
 retrieval:
@@ -77,12 +55,15 @@ retrieval:
 
 # --- LLM Client Parameters ---
 llm:
-  engine: "ollama"
-  base_url: "http://localhost:11434"
+  # Ollama's address comes from the OLLAMA_HOST environment variable (default http://localhost:11434)
   generation_model: "llama3.2:3b"
   rewriter_model: "llama3.2:1b"    # de-contextualises follow-up questions
   temperature: 0.0
   max_tokens: 256
+  top_p: 0.1                       # nucleus sampling for answers
+  context_window: 4096             # the browser demo's answer model context; Ollama uses its own
+  answer_style: "full"             # full | short_first (a 4 to 10 word first sentence); set by answer_style --apply
+  timeout_s: 120                   # longest wait for each Ollama reply or stream chunk
 
 # --- Cache ---
 # Two-level query cache keyed on the resolved (rewritten, English-normalised) query.
@@ -93,8 +74,64 @@ cache:
   max_entries: 256
   similarity_threshold: 0.95       # cosine; bge embeddings are L2-normalised
 
-# --- Verification & Fallbacks ---
-verification:
-  enable_ner_guard: true
-  min_faithfulness_score: 0.85
-  fallback_message: "The provided documents do not contain sufficient information to verify this answer."
+# --- Grounding check ---
+# Each answer sentence is checked against the retrieved passages before it is shown or spoken; unsupported
+# sentences are dropped, and if none survive the answer is refused. "none" keeps every sentence unchecked.
+# The grounding benchmark (python -m src.eval.grounding_benchmark run --apply) picks the checker.
+grounding:
+  checker: "judge"                  # none | nli | judge
+  nli_model: "cross-encoder/nli-deberta-v3-small"
+  nli_revision: "fa2804872c3b4bd748f38c0185cc85775361e735"   # Hub commit, pinned 2026-10-10 (Apache 2.0)
+  judge_model: "llama3.2:1b"
+  threshold: 0.5                   # NLI only: entailment probability a sentence needs
+
+# --- Observability ---
+# One SQLite file beside the index records every question; the Observability tab reads it.
+observability:
+  db_path: null                    # default: vectordb/traces.sqlite3, beside the Qdrant storage
+  max_traces: 10000                # older traces are deleted
+
+# --- Hardening ---
+# No login: these limits plus network binding protect the API. Add your public host to allowed_hosts and
+# turn docs off before deploying.
+api:
+  allowed_hosts: ["localhost", "127.0.0.1", "[::1]", "api"]   # Host header the API answers to
+  allowed_origins: []              # extra browser origins allowed to make changes (same origin always is)
+  trusted_callers: ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"]
+  docs_enabled: true               # /docs, /redoc and /openapi.json
+  max_body_kb: 64                  # every request body except uploads
+  max_query_chars: 1000
+  max_history_turns: 6
+  max_turn_chars: 2000
+  max_concurrent_answers: 4        # the next question gets 503 "busy"
+  busy_retry_after_s: 5
+  rate_limit:                      # per browser (X-VRAG-Client from the dashboard); local scripts are exempt
+    questions_per_min: 20
+    changes_per_min: 5             # uploads, deletes, clearing the cache
+upload:
+  max_mb: 25
+  max_pdf_pages: 300
+index:
+  retire_after_s: 30               # a replaced index generation is deleted this long after the swap
+health:
+  ollama_timeout_s: 3
+  cache_s: 10
+
+
+# --- Live demo ---
+# What the browser loads, pinned to Hub revisions. demo/scripts/build_demo_index.py exports these, plus the
+# retrieval, llm, grounding and api settings above, into demo/public/config.json.
+demo:
+  confidence_threshold: 0.84       # the browser's fp32 cross encoder gate; matches flashrank at 0.65 on all 67 golden questions
+  grounding_checker: "judge:Llama-3.2-1B-Instruct (WebLLM)"   # as the server's default (grounding.checker: judge); NLI dropped half of correct text answers (2026-10-16)
+  judge_model: "1b"                # the answer_models entry the judge runs (its own engine, pinned revision)
+  embedder: {id: "Xenova/bge-small-en-v1.5", revision: "ea104dacec62", dtype: "fp32"}
+  reranker: {id: "Xenova/ms-marco-MiniLM-L-12-v2", revision: "42a4a787e304", dtype: "fp32", max_tokens: 512}
+  whisper: {id: "onnx-community/whisper-base.en", revision: "51eefc0af78b", dtype_f16: "fp16", dtype: "fp32", decoder_dtype: "fp32"}   # the fp16 merged decoder is rejected by onnxruntime
+  kokoro: {id: "onnx-community/Kokoro-82M-v1.0-ONNX", revision: "1939ad2a8e41", dtype: "fp32", voice: "af_bella"}   # fp16 on WebGPU speaks garbled audio (2026-10-16)
+  answer_models:                   # WebLLM ids; f16 needs the shader-f16 GPU feature; download_mb from each ndarray-cache.json
+    # revision_*: the Hub commit each build downloads from (WebLLM otherwise reads main)
+    3b: {f16: "Llama-3.2-3B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-3B-Instruct-q4f32_1-MLC", revision_f16: "1e80abf71e3d", revision_f32: "6083cfdaaf08", vram_mb_f16: 2264, vram_mb_f32: 2952, download_mb: 1807}
+    1b: {f16: "Llama-3.2-1B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-1B-Instruct-q4f32_1-MLC", revision_f16: "2a37b0a5ecb6", revision_f32: "a949835e0f9a", vram_mb_f16: 879, vram_mb_f32: 1129, download_mb: 695}
+  space: "Prashant-Mahto/vrag-pdf-reader"   # the PDF reading Space (space/app.py) the page sends uploads to
+  uploads: {per_day: 3, max_mb: 10, max_pages: 5, max_chunks: 2000, types: [".pdf", ".md", ".txt"]}   # the Space enforces its own copies

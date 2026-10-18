@@ -1,0 +1,38 @@
+# Suggested questions on the live demo. Each passes when its answer cites expected_doc on one of
+# expected_pages (at temperature 0). Drafted 2026-10-16 from the built chunks; answers noted for reference.
+questions:
+  - question: "What is the forecast Brent crude oil spot price per barrel for 2027?"
+    kind: table
+    expected_doc: eia-short-term-energy-outlook-2026-10-pages-1-20.pdf
+    expected_pages: [3]
+    note: "$84 per barrel (U.S. energy market indicators table)"
+
+  - question: "What is the forecast U.S. retail gasoline price for 2026?"
+    kind: table
+    expected_doc: eia-short-term-energy-outlook-2026-10-pages-1-20.pdf
+    expected_pages: [3]
+    note: "$3.91 per gallon"
+
+  - question: "What percentage of people were without health insurance in 2013?"
+    kind: figure
+    expected_doc: census-health-insurance-2023.pdf
+    expected_pages: [20]
+    note: "13.3 percent (Figure 9, 2013 to 2023)"
+
+  - question: "What were the 2023 median earnings of all male workers?"
+    kind: figure
+    expected_doc: census-income-2023-pages-1-25.pdf
+    expected_pages: [15]
+    note: "$56,280 (Figure 4)"
+
+  - question: "What was the 2023 median income of family households?"
+    kind: figure
+    expected_doc: census-income-2023-pages-1-25.pdf
+    expected_pages: [8]
+    note: "$102,800 (Figure 1)"
+
+  - question: "What forecasting framework does the renewable energy paper propose?"
+    kind: text
+    expected_doc: arxiv-2507.04087-renewable-energy-mix.pdf
+    expected_pages: [1, 2]
+    note: "ALR-BDARMA, a compositional time series model"

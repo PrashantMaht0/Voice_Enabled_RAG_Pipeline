@@ -1,3 +1,1 @@
-from .embedder import DenseEmbedder
-
-__all__ = ["DenseEmbedder"]
+"""Dense embeddings for semantic search."""

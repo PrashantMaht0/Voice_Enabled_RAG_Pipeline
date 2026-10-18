@@ -1,0 +1,22 @@
+# The Python files the browser demo loads into Pyodide: the core and everything it imports.
+# The Pyodide test runner and the site build both read this list, so it exists once. A new folder here also
+# belongs in the paths of .github/workflows/demo_pages.yml, so editing it redeploys the demo.
+src/pipeline/__init__.py
+src/pipeline/core.py
+src/pipeline/limits.py
+src/pipeline/prompts.py
+src/pipeline/retrieval.py
+src/pipeline/settings.py
+src/pipeline/sources.py
+src/prompts/__init__.py
+src/prompts/prompt_template.py
+src/utils/__init__.py
+src/utils/config.py
+src/utils/metrics.py
+src/utils/text_sanitizer.py
+src/verification/__init__.py
+src/verification/citations.py
+src/verification/grounding.py
+src/demo_index.py
+src/observability/__init__.py
+src/observability/metrics.py

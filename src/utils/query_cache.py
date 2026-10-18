@@ -120,6 +120,8 @@ class QueryCache:
             return None, None
 
     def put(self, query: str, payload: dict):
+        """Stores an answer payload under the normalized query (and its embedding for semantic lookups), evicting the
+        least recently used entry past max_entries."""
         if not self.enabled:
             return
 
@@ -149,6 +151,7 @@ class QueryCache:
         print(f"[Cache] Invalidated ({reason}).")
 
     def stats(self) -> dict:
+        """Hit and miss counts and the hit rate, for `GET /api/cache`."""
         with self._lock:
             lookups = self.hits_exact + self.hits_semantic + self.misses
             hits = self.hits_exact + self.hits_semantic

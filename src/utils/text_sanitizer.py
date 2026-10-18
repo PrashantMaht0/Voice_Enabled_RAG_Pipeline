@@ -1,19 +1,21 @@
 """Cleans generated answers for speech and inspects conversation history."""
 import re
 
-# Citation markers injected into every chunk at ingestion time (see chunking.py)
-SOURCE_HEADER = re.compile(r"\[Source: (.+?) \| Chunk: (\d+)\]\s*")
+# The one citation tag grammar, injected into every chunk at ingestion time (see chunking.py):
+# PDFs cite a page, "[Source: a.pdf | Page: 12]"; text files a chunk, "[Source: a.md | Chunk: 3]".
+CITATION_TAG = re.compile(r"\[Source: (?P<source>.+?) \| (?P<kind>Page|Chunk): (?P<num>\d+)\]")
+# The same tag at the head of a chunk, plus the newline that follows it
+SOURCE_HEADER = re.compile(CITATION_TAG.pattern + r"\s*")
+
+
+def parse_tag(match: re.Match) -> tuple:
+    """(source, kind, number) of a matched tag; the number is an int, so "03" equals "3"."""
+    return match.group("source"), match.group("kind"), int(match.group("num"))
 
 
 def strip_citation_headers(text: str) -> str:
     """Removes only COMPLETE citation markers. Safe to apply to a growing buffer."""
     return SOURCE_HEADER.sub("", text)
-
-
-def has_incomplete_header(text: str) -> bool:
-    """True while a citation marker is still being written."""
-    opened = text.rfind("[Source")
-    return opened != -1 and "]" not in text[opened:]
 
 
 def drop_incomplete_header(text: str) -> str:
@@ -24,14 +26,103 @@ def drop_incomplete_header(text: str) -> str:
     return text
 
 
+# Speech only patterns. The displayed answer keeps its markdown and citations.
+# Loose citation forms the model writes besides the exact header, e.g. "(Source: a.pdf, Chunk 3)".
+LOOSE_CITATION = re.compile(r"[\[(]\s*(?:source|chunk|page)\b[^\])\n]*[\])]", re.IGNORECASE)
+FILE_NAME = re.compile(r"\b[\w\-]+\.(?:pdf|md|markdown|txt|docx?|html?)\b", re.IGNORECASE)
+CHUNK_NUMBER = re.compile(r"\bchunks?\s*#?\s*\d+\b", re.IGNORECASE)
+CODE_FENCE = re.compile(r"^[ \t]*(?:```|~~~).*$", re.MULTILINE)
+LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]+")
+# "•" and friends, plus U+F0B7, the bullet glyph PDF extraction leaves behind
+BULLET_GLYPHS = "•▪◦‣●"
+# "*", "-", "+", a bullet glyph, or "1." / "1)" at the start of a line
+LIST_MARKER = re.compile(rf"^[ \t]*(?:[*+\-{BULLET_GLYPHS}]|\d{{1,3}}[.)])[ \t]+")
+STRAY_BULLET = re.compile(f"[{BULLET_GLYPHS}]")
+BOLD = re.compile(r"(\*\*|__)(\S(?:.*?\S)?)\1")
+ITALIC = re.compile(r"(?<![\w*])([*_])(\S(?:.*?\S)?)\1(?![\w*])")
+SENTENCE_CLOSED = re.compile(r"[.!?][\"')\]]*$")
+
+
+def _speak_line(line: str) -> tuple[str, bool]:
+    """Strips line level markdown. Returns the text and whether it stands alone (heading or list item)."""
+    heading = HEADING.match(line)
+    if heading:
+        return line[heading.end():], True
+    marker = LIST_MARKER.match(line)
+    if marker:
+        return line[marker.end():], True
+    return line, False
+
+
+def _close_sentence(line: str) -> str:
+    """Ends a heading or list item with a period so the voice pauses before the next one."""
+    line = line.rstrip(" ,;:")
+    return line if SENTENCE_CLOSED.search(line) else line + "."
+
+
 def sanitize_for_speech(text: str) -> str:
-    """Removes citation markers and stray glyphs before synthesis."""
-    text = drop_incomplete_header(strip_citation_headers(text))
-    text = text.replace("", " ")          # PDF bullet glyph
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    text = re.sub(r"[ \t]+\n", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    """Turns a formatted, cited answer into plain sentences for synthesis."""
+    # Per line, because SOURCE_HEADER also eats the newline that ends a list item
+    text = "\n".join(strip_citation_headers(line) for line in text.splitlines())
+    text = drop_incomplete_header(text)
+    text = LOOSE_CITATION.sub("", text)
+    text = FILE_NAME.sub("the document", text)
+    text = CHUNK_NUMBER.sub("", text)
+    text = CODE_FENCE.sub("", text)
+    text = LINK.sub(r"\1", text)
+
+    spoken = []
+    for raw in text.splitlines():
+        line, stands_alone = _speak_line(raw)
+        line = STRAY_BULLET.sub(" ", line)
+        line = BOLD.sub(r"\2", line)
+        line = ITALIC.sub(r"\2", line)
+        line = re.sub(r"(?<=\w)_(?=\w)", " ", line)     # snake_case reads as words
+        line = re.sub(r"\b([CF])#", r"\1 sharp", line)  # keep the language name before dropping "#"
+        line = re.sub(r"[*_`#]", "", line)              # no symbol is ever read aloud
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            spoken.append(_close_sentence(line) if stands_alone else line)
+
+    text = " ".join(spoken)
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)        # " ." left where a tag was cut
+    text = re.sub(r"(?<!\.)\.\.(?!\.)", ".", text)     # "files.." but never an ellipsis
+    text = re.sub(r"([.!?])[,;:]+", r"\1", text)
     return text.strip()
+
+
+SPLIT_OVER_WORDS = 12        # an approved sentence longer than this is spoken in clause sized pieces
+MIN_PIECE_WORDS = 5          # so the first piece plays after about a second of synthesis, not three
+
+
+def speech_pieces(spoken: str) -> list[str]:
+    """A long sentence cut at commas, semicolons and colons into pieces of at least MIN_PIECE_WORDS words.
+
+    Only how an approved sentence is fed to the voice changes; nothing unchecked is ever spoken."""
+    if len(spoken.split()) <= SPLIT_OVER_WORDS:
+        return [spoken]
+    parts = [p.strip() for p in re.split(r"(?<=[,;:])\s+", spoken) if p.strip()]
+    pieces: list[str] = []
+    for part in parts:
+        if pieces and len(pieces[-1].split()) < MIN_PIECE_WORDS:
+            pieces[-1] += " " + part
+        else:
+            pieces.append(part)
+    if len(pieces) > 1 and len(pieces[-1].split()) < MIN_PIECE_WORDS:
+        last = pieces.pop()                  # pop first: `pieces[-2] += pieces.pop()` wrote over the piece before
+        pieces[-1] += " " + last
+    return pieces
+
+
+# What Whisper writes for silence or a cough; never worth a search (the browser demo uses it too)
+FILLER_TRANSCRIPTS = {"", "you", "thank you", "thanks for watching", "bye"}
+
+
+def is_filler_transcript(transcript: str) -> bool:
+    """True when a transcript is only filler such as "You." or "Thank you."."""
+    words = re.sub(r"[^\w\s]", "", (transcript or "").lower()).strip()
+    return re.sub(r"\s+", " ", words) in FILLER_TRANSCRIPTS
 
 
 # A refusal asserts no facts, so it is never reused as context or scored.
@@ -42,17 +133,15 @@ REFUSAL_MARKERS = (
     "do not contain sufficient information",
     "not explicitly stated in the provided",
     "cannot provide a direct answer",
+    "please ask a full question",            # an empty query
 )
 
 
 def is_refusal(text: str) -> bool:
+    """True when the text is a refusal (any REFUSAL_MARKERS phrase), which is never cached as context or scored as an
+    answer."""
     lowered = (text or "").lower()
     return any(marker in lowered for marker in REFUSAL_MARKERS)
-
-
-def has_non_latin(text: str) -> bool:
-    """True if the text carries script beyond Latin/punctuation (e.g. Devanagari)."""
-    return any(ord(ch) > 0x24F for ch in (text or "") if ch.isalpha())
 
 
 def usable_history(history):

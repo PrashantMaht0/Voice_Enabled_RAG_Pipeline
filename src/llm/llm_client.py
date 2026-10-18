@@ -1,17 +1,16 @@
-from typing import Any, Generator, List, Dict, Optional
+"""The local Ollama client: streamed answers from the retrieved chunks, and follow up rewriting."""
+from typing import Any, Dict, Generator, List, Optional
+
 import ollama
-from src.prompts.prompt_template import (
-    SYSTEM_RAG_PROMPT,
-    QUERY_REWRITE_PROMPT,
-    NORMALIZE_QUERY_PROMPT,
-    FALLBACK_RESPONSE,
-    build_rag_context_prompt,
-    format_chat_history
-)
+
+from src.pipeline.prompts import answer_messages, clean_rewrite, refers_back, rewrite_messages
+from src.prompts.prompt_template import ANSWER_STYLES, FALLBACK_RESPONSE
 from src.utils.config import pick
+from src.utils.metrics import token_counts
 
 class LocalLLMClient:
-    """Local Ollama client for streaming, temperature-0 generation."""
+    """Answers with `llm.generation_model` and rewrites follow ups with `llm.rewriter_model`, both at
+    temperature 0 so the same question gets the same answer."""
 
     def __init__(
         self,
@@ -23,117 +22,84 @@ class LocalLLMClient:
         self.rewriter_model = pick(rewriter_model, "llm.rewriter_model", "llama3.2:1b")
         self.temperature = pick(None, "llm.temperature", 0.0)
         self.max_tokens = pick(None, "llm.max_tokens", 256)
-        self.client = ollama.Client(host=host) if host else ollama
-        
-        # Stores the final token count after generation finishes
-        self.last_eval_count = 0 
+        self.top_p = pick(None, "llm.top_p", 0.1)
+        self.answer_style = pick(None, "llm.answer_style", "full")
+        if self.answer_style not in ANSWER_STYLES:
+            print(f"[LLM] WARNING: unknown llm.answer_style {self.answer_style!r}, using 'full'")
+            self.answer_style = "full"
+        # Always a client with a timeout (per response or stream chunk), never the module default that waits
+        # forever; host None means OLLAMA_HOST or the local default
+        self.timeout_s = float(pick(None, "llm.timeout_s", 120))
+        self.client = ollama.Client(host=host, timeout=self.timeout_s)
 
-    def rewrite_query(self, query: str, chat_history: List[Dict[str, str]]) -> str:
-        """Rewrites conversational queries into standalone queries."""
-        if not chat_history:
+    def rewrite_query(self, query: str, chat_history: List[Dict[str, str]], tracer: Optional[Any] = None) -> str:
+        """Rewrites conversational queries into standalone queries; the call's tokens go to the request's tracer
+        (`rewrite`) when one is given. A question that already stands alone is returned unchanged."""
+        if not chat_history or not refers_back(query):
             return query.strip()
-
-        formatted_history = format_chat_history(chat_history)
-        prompt = QUERY_REWRITE_PROMPT.format(history=formatted_history, query=query)
 
         try:
             response = self.client.chat(
                 model=self.rewriter_model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=rewrite_messages(query, chat_history),
                 options={"temperature": self.temperature, "num_predict": 64}
             )
-            rewritten = response["message"]["content"].strip().strip('"')
-            return rewritten if rewritten else query
-        except Exception as e:
-            return query
-
-    def normalize_query(self, query: str) -> str:
-        """Turns a Hinglish question into an English search query."""
-        try:
-            response = self.client.chat(
-                model=self.generation_model,
-                messages=[{"role": "user", "content": NORMALIZE_QUERY_PROMPT.format(query=query)}],
-                options={"temperature": self.temperature, "num_predict": 64}
-            )
-            return self._first_usable_line(response["message"]["content"], query)
+            if tracer:
+                tracer.add_tokens("rewrite", *token_counts(response))
+            return clean_rewrite(response["message"]["content"], query)
         except Exception:
             return query
-
-    @staticmethod
-    def _first_usable_line(reply: str, fallback: str) -> str:
-        """Extracts a single query line, falling back when the model rambles."""
-        text = (reply or "").strip()
-        if "English:" in text:                       # model repeated the template
-            text = text.split("English:")[-1]
-
-        for line in text.splitlines():
-            line = line.strip().strip('"').strip()
-            if not line:
-                continue
-            lowered = line.lower()
-            if lowered.startswith(("here is", "here are", "sure", "the rewritten")):
-                continue
-            if line[0].isdigit() and line[1:3] in (". ", ") "):   # numbered list item
-                line = line[3:].strip()
-            if 3 < len(line) <= 200:
-                return line
-        return fallback
 
     def stream_generate(
         self,
         query: str,
-        context_chunks: List[str]
+        context_chunks: List[str],
+        tracer: Optional[Any] = None
     ) -> Generator[str, None, None]:
-        """Yields tokens individually and captures metadata when finished."""
-        self.last_eval_count = 0
-        
+        """The answer's tokens as Ollama streams them; the fallback refusal when no chunk passed the gate.
+
+        The final chunk's token counts go to the request's tracer (`generation`) when one is given; an aborted
+        stream never sees that chunk, so its tokens are not counted."""
         if not context_chunks:
             yield FALLBACK_RESPONSE
             return
 
-        system_instruction = SYSTEM_RAG_PROMPT.format(fallback=FALLBACK_RESPONSE)
-        user_content = build_rag_context_prompt(query, context_chunks)
+        messages = answer_messages(query, context_chunks, self.answer_style)
 
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": user_content}
-        ]
+        # A failed or timed out call raises: the answer pipeline turns it into a short error with a reference,
+        # instead of the error text becoming part of a cached "answer"
+        stream = self.client.chat(
+            model=self.generation_model,
+            messages=messages,
+            stream=True,
+            options={
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "num_predict": self.max_tokens
+            }
+        )
 
-        try:
-            stream = self.client.chat(
-                model=self.generation_model,
-                messages=messages,
-                stream=True,
-                options={
-                    "temperature": self.temperature,
-                    "top_p": 0.1,
-                    "num_predict": self.max_tokens
-                }
-            )
+        for chunk in stream:
+            token = chunk.get("message", {}).get("content", "")
+            if token:
+                yield token
+                
+            if chunk.get("done", False) and tracer:      # the last chunk carries the token counts
+                tracer.add_tokens("generation", *token_counts(chunk))
 
-            for chunk in stream:
-                token = chunk.get("message", {}).get("content", "")
-                if token:
-                    yield token
-                    
-                # Ollama returns metadata on the final streaming chunk
-                if chunk.get("done", False):
-                    # eval_count represents the number of output tokens generated
-                    self.last_eval_count = chunk.get("eval_count", 0)
-
-        except Exception as e:
-            yield f" Error processing response: {str(e)}"
 
     def generate(self, query: str, context_chunks: List[str], tracer: Optional[Any] = None) -> str:
-        """
-        Synchronous generation helper that optionally integrates with the PipelineTracer.
-        """
-        if tracer: tracer.start_span("generation")
-        
-        tokens = list(self.stream_generate(query, context_chunks))
-        full_text = "".join(tokens).strip()
-        
-        if tracer: 
-            tracer.end_span("generation", f"LLM call — {self.last_eval_count} tokens generated")
-            
+        """The whole answer at once (the stream joined), timed as the "generation" span when a tracer is
+        given. Used where a client has no stream_generate."""
+        if tracer:
+            tracer.start_span("generation")
+        full_text = "".join(self.stream_generate(query, context_chunks, tracer=tracer)).strip()
+        if tracer:
+            tracer.end_span("generation", f"LLM call — {generated_tokens(tracer)} tokens generated")
         return full_text
+
+
+def generated_tokens(tracer) -> int:
+    """Output tokens the answer model reported for this request (0 when none)."""
+    pair = tracer.layer_tokens("generation")
+    return pair[1] if pair else 0

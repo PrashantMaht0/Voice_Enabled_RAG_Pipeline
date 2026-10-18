@@ -1,8 +1,27 @@
+# V-RAG in Docker. Before the first start, download the Kokoro voice files into ./models (see README).
+# After `docker compose up`, pull the language models once:
+#   docker compose exec ollama ollama pull llama3.2:3b
+#   docker compose exec ollama ollama pull llama3.2:1b
+#   docker compose exec ollama ollama pull qwen2.5vl:7b     # reads charts while indexing
+#   Use Ollama on the host instead (GPU speed on a Mac):
+#     VRAG_OLLAMA_HOST=http://host.docker.internal:11434 docker compose up
+#   Start over (deletes documents, index, models and caches):  docker compose down -v
+#   Volumes made before the app ran as a non root user need, once:
+#     docker compose run --rm --user root api chown -R 10001:10001 /app/data /app/vectordb /cache
+
+x-app-env: &app-env
+  # Compose reads only VRAG_OLLAMA_HOST, so an OLLAMA_HOST in your shell never leaks in
+  OLLAMA_HOST: ${VRAG_OLLAMA_HOST:-http://ollama:11434}
+  HF_HOME: /cache/huggingface
+  FLASHRANK_CACHE_DIR: /cache/flashrank
+  TORCH_HOME: /cache/torch
+  MPLCONFIGDIR: /cache/matplotlib
+
 services:
   ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    image: ollama/ollama:0.32.5      # pinned: the version this project runs; bump deliberately
+    # No published port: the other services reach it over the compose network,
+    # so it never clashes with an Ollama already running on the host.
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:
@@ -13,27 +32,54 @@ services:
 
   api:
     build: .
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    image: vrag-app
+    # --no-proxy-headers: a forwarded header can never make a remote caller look like loopback
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --no-proxy-headers
+    restart: unless-stopped
     ports:
-      - "8000:8000"
-    environment:
-      OLLAMA_HOST: http://ollama:11434
+      # This machine only: the API has no login and serves your stored questions
+      - "127.0.0.1:8000:8000"
+    environment: *app-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data
-      - ./vectordb:/app/vectordb
+      - vrag_data:/app/data
+      - vrag_index:/app/vectordb
+      - vrag_cache:/cache
+    healthcheck:
+      # Process up only: /api/health answers 200 even while Ollama is offline
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 300s
     depends_on:
       ollama:
         condition: service_healthy
 
   ui:
-    build: .
+    image: vrag-app
+    pull_policy: never
     command: python app.py
+    restart: unless-stopped
     ports:
-      - "7860:7860"
+      # This machine only: the Observability tab shows your stored questions
+      - "127.0.0.1:7860:7860"
     environment:
       VRAG_API_BASE: http://api:8000/api
+      VRAG_UI_HOST: 0.0.0.0           # inside the container; still published on 127.0.0.1 only
+      HF_HOME: /cache/huggingface
+      TORCH_HOME: /cache/torch
+      MPLCONFIGDIR: /cache/matplotlib
+    volumes:
+      - ./models:/app/models:ro     # Kokoro voice files only, downloaded once for local and Docker use
+      - vrag_cache:/cache
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   ollama_models:
+  vrag_data:
+  vrag_index:
+  vrag_cache:
