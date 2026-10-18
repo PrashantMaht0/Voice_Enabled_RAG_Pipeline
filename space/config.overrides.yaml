@@ -1,4 +1,4 @@
-# The Space's differences from config/config.yaml (spec 0009, AC-14); assemble.py merges them into config.yaml.
+# The Space's differences from config/config.yaml; assemble.py merges them into config.yaml.
 ingestion:
   figure_backend: transformers
   figure_parser: Qwen/Qwen2.5-VL-3B-Instruct

@@ -27,7 +27,7 @@ STRICT OPERATIONAL RULES:
    column headings. No conversational filler (e.g., "Sure, I can help").
 """
 
-# The short first answer style (spec 0006, short-first-sentence child): rules 2 and 5 change, 1, 3 and 4 do not,
+# The short first answer style: rules 2 and 5 change, 1, 3 and 4 do not,
 # so a short direct first sentence is written, checked and spoken sooner.
 _SHORT_FIRST_RULE_2 = """2. Answer first: the first sentence gives the direct answer in the snippets' own words, shortened to fit rule 5.
    If the question asks what something is, the following sentences give the definition the snippets state.
@@ -55,7 +55,7 @@ SYSTEM_RAG_PROMPT_SHORT_FIRST = _replace_rule(_replace_rule(SYSTEM_RAG_PROMPT, 2
                                               _SHORT_FIRST_RULE_5)
 
 ANSWER_STYLES = {"full": SYSTEM_RAG_PROMPT, "short_first": SYSTEM_RAG_PROMPT_SHORT_FIRST}
-# Phrases only the example above contains; an answer holding one copied the example (spec 0006, AC-21).
+# Phrases only the example above contains; an answer holding one copied the example.
 EXAMPLE_LEAK_PHRASES = ("example-guide", "warranty lasts two years")
 
 

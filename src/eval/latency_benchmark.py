@@ -1,4 +1,4 @@
-"""Per stage latency benchmark over the golden questions (spec 0003).
+"""Per stage latency benchmark over the golden questions.
 
 Text goes through the running API; voice is timed in this process with the
 dashboard's own speech classes. Run from the repo root, with the API up:
@@ -298,7 +298,7 @@ class Benchmark:
                           "spoken_chars": None, "audio_s": None, "error": None}
                 started = time.perf_counter()
                 # Same steps as app.voice_query: resample to 16 kHz, transcribe, then speak each streamed
-                # sentence on a worker thread as soon as it arrives (spec 0006)
+                # sentence on a worker thread as soon as it arrives
                 mono = resample_audio(int16_to_float32(pcm), orig_sr=rate, target_sr=16000)
                 transcript = stt.transcribe(float32_to_int16(mono).tobytes())
                 record["stt_ms"] = (time.perf_counter() - started) * 1000
@@ -481,7 +481,7 @@ POWER_SOURCES = {"AC Power": "AC", "Battery Power": "Battery"}
 
 
 def power_state(run=subprocess.run) -> dict:
-    """Power source and Low Power Mode from pmset (spec 0006, AC-23); null when either cannot be read."""
+    """Power source and Low Power Mode from pmset; null when either cannot be read."""
     state = {"source": None, "low_power_mode": None}
     try:
         batt = run([PMSET, "-g", "batt"], capture_output=True, text=True, timeout=3).stdout

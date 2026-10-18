@@ -35,8 +35,8 @@ class WhisperSTT:
             print("[STT] WARNING: faster-whisper not installed. Running in mock mode.")
 
     def transcribe_detailed(self, audio_bytes: bytes):
-        """(transcript, [no speech probability per segment]) of 16 kHz, 16 bit mono PCM, for the silence rule
-        (spec 0006). Mock mode hears nothing: ("", [])."""
+        """(transcript, [no speech probability per segment]) of 16 kHz, 16 bit mono PCM, for the silence rule.
+        Mock mode hears nothing: ("", [])."""
         if not self.model:
             return "", []
         audio_array = int16_to_float32(np.frombuffer(audio_bytes, dtype=np.int16))

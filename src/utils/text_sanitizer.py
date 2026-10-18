@@ -18,12 +18,6 @@ def strip_citation_headers(text: str) -> str:
     return SOURCE_HEADER.sub("", text)
 
 
-def has_incomplete_header(text: str) -> bool:
-    """True while a citation marker is still being written."""
-    opened = text.rfind("[Source")
-    return opened != -1 and "]" not in text[opened:]
-
-
 def drop_incomplete_header(text: str) -> str:
     """Discards a citation marker that never closed (truncated generation)."""
     opened = text.rfind("[Source")
@@ -121,7 +115,7 @@ def speech_pieces(spoken: str) -> list[str]:
     return pieces
 
 
-# What Whisper writes for silence or a cough; never worth a search (spec 0006, AC-5; the browser demo uses it too)
+# What Whisper writes for silence or a cough; never worth a search (the browser demo uses it too)
 FILLER_TRANSCRIPTS = {"", "you", "thank you", "thanks for watching", "bye"}
 
 
@@ -139,7 +133,7 @@ REFUSAL_MARKERS = (
     "do not contain sufficient information",
     "not explicitly stated in the provided",
     "cannot provide a direct answer",
-    "please ask a full question",            # an empty query (spec 0006)
+    "please ask a full question",            # an empty query
 )
 
 

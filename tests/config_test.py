@@ -44,7 +44,7 @@ def test_missing_keys_fall_back_to_defaults(custom_config):
 
 def test_the_image_installs_torch_and_torchvision_from_the_same_cpu_index():
     """A PyPI torchvision is built for CUDA torch; beside CPU torch it broke `import timm`, so the
-    table detector failed to load in Docker and table reading silently fell back to none (spec 0004)."""
+    table detector failed to load in Docker and table reading silently fell back to none."""
     import re
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]

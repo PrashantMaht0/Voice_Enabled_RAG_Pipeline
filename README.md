@@ -29,8 +29,8 @@ What to expect, honestly:
   of GPU a page, and Hugging Face gives an anonymous visitor about 2 minutes a day, so one 5 page PDF uses most
   of it. Markdown and text files use no GPU.
 - **Uploads go to Hugging Face.** The [PDF reader Space](https://huggingface.co/spaces/Prashant-Mahto/vrag-pdf-reader)
-  runs this repository's own ingestion code, deletes each file right after reading and logs only its name,
-  page count and timing. Hugging Face's own request logs are outside this project's control. The chunks come
+  runs this repository's own ingestion code, deletes each file right after reading and logs only a short hash
+  of its name, the page count and the timing. Hugging Face's own request logs are outside this project's control. The chunks come
   back and stay in your browser.
 - **A smaller chart reader for uploads.** Charts in your PDFs are read by Qwen2.5 VL 3B; the sample documents
   were read by the 7B model behind the numbers below (on the chart benchmark, 11 of 31 right against 9 for 3B).
@@ -82,7 +82,7 @@ These are the article's principles. Here is how far V-RAG implements each one to
 | **H** | Partly: the gate uses the reranker score only (refuses below 0.65). No freshness or authority scoring. |
 | **R** | Done: a strict system prompt and temperature 0.0. |
 | **O** | Partly: every answer cites file and page (PDFs) or chunk (text files). No paragraph offsets. |
-| **N** | Partly: spaCy NER flags names and codes that are not in the retrieved text, and citations to passages that were not retrieved are removed. A failed check is reported, not acted on yet. |
+| **N** | Done, by a different route: a small judge model (Llama 3.2 1B) checks every sentence against the retrieved passages and unsupported sentences are removed; citations to passages that were not retrieved are removed too. No named entity extraction. |
 | **I** | Partly: a manual Ragas quality gate and a latency benchmark, run on demand. No continuous monitoring. |
 | **C** | Done: exact and similar question caches, cleared whenever a document changes. |
 
@@ -119,12 +119,19 @@ Voice_Enabled_RAG_Pipeline/
 │       ├── rag_eval_ci.yml          # CI: fast tests on every PR, Ragas gate on demand
 │       ├── demo_pages.yml           # Builds the live demo and publishes it to GitHub Pages
 │       └── space_deploy.yml         # Syncs the PDF reader Space on Hugging Face
-├── assets/                          # Screenshots, the architecture diagram, an audio sample
+├── assets/                          # Screenshots, the architecture diagram, an audio sample, a recorded Ragas run
 ├── config/
 │   └── config.yaml                  # Every tunable setting: models, thresholds, paths, cache
 ├── demo/                            # The live demo: a static site (Vite, TypeScript, WebGPU, Pyodide)
-│   ├── src/                         # The page, the browser driver of the shared core, model workers
-│   ├── py/bridge.py                 # The Pyodide side: the demo index and the question in progress
+│   ├── src/
+│   │   ├── main.ts                  # The page: the Ask, Documents and Observability tabs
+│   │   ├── pipeline/                # The browser driver of the shared core and its Pyodide worker
+│   │   ├── models/                  # WebLLM (answer model and judge), embeddings, reranker, model choice
+│   │   ├── documents/               # The Documents tab and uploads to the PDF reader Space
+│   │   ├── voice/                   # Recording, Whisper and Kokoro speech
+│   │   └── shared/                  # Worker messaging and browser storage
+│   ├── python/bridge.py             # The Pyodide side: the demo index and the question in progress
+│   ├── pyodide-runner/              # Runs tests/pipeline inside Pyodide
 │   ├── sample/                      # The sample documents' sources, licences and suggested questions
 │   └── scripts/                     # Builds the sample index and bundles the shared Python
 ├── space/                           # The PDF reader: a Gradio ZeroGPU Space running src/ingestion
@@ -134,13 +141,17 @@ Voice_Enabled_RAG_Pipeline/
 │       ├── golden_dataset.json      # 67 evaluation questions (47 in-scope + 20 adversarial)
 │       ├── table_questions.json     # 29 reviewed table questions over two public PDFs
 │       └── figure_questions.json    # 31 reviewed chart questions over two public reports
-├── docs/
-│   └── ragas_gate_run.txt           # Recorded output of a passing quality-gate run
 ├── src/
 │   ├── api/
-│   │   └── routes.py                # All HTTP endpoints: query, upload, corpus, cache, health
+│   │   ├── routes.py                # All HTTP endpoints: query, upload, corpus, cache, health, traces
+│   │   └── guards.py                # Host and Origin checks, body size, rate limits, answer slots, quiet errors
+│   ├── pipeline/                    # The answer rules as pure Python, run by the API and by the browser demo
+│   │   ├── core.py                  # One question as steps: rewrite, cache, retrieval, gate, answer, grounding
+│   │   └── ...                      # settings, limits, prompts, retrieval fusion, citation kinds
+│   ├── demo_index.py                # The browser demo's in memory index (cosine and BM25 over numpy)
 │   ├── ingestion/
 │   │   ├── loader.py                # Unicode normalization (NFC) and document parsing
+│   │   ├── upload_checks.py         # Upload name, type and content checks, shared with the PDF reader Space
 │   │   ├── chunking.py              # Token-aware chunker with citation markers
 │   │   ├── tables.py                # Table detection and the table readers (PDF tables to Markdown)
 │   │   └── figures.py               # Finds charts and diagrams and describes them with a vision model
@@ -148,7 +159,8 @@ Voice_Enabled_RAG_Pipeline/
 │   │   └── embedder.py              # BGE embedding client
 │   ├── vector_db/
 │   │   ├── hybrid_store.py          # Tantivy (BM25) + Qdrant (dense) search and fusion
-│   │   └── vector_store.py          # Index lifecycle: create, ingest, reset
+│   │   ├── vector_store.py          # Index generations: build beside the live one, check, swap in
+│   │   └── index_worker.py          # One rebuild at a time; requests during a build merge into one
 │   ├── retrieval/
 │   │   ├── query_rewriter.py        # Resolves pronouns in multi-turn conversation
 │   │   ├── reranker.py              # FlashRank cross-encoder scoring (tables scored without Markdown syntax)
@@ -169,8 +181,8 @@ Voice_Enabled_RAG_Pipeline/
 │   │   ├── context_size.py          # Compares reading 3 or 5 passages under the same gates
 │   │   └── grounding_benchmark.py   # Compares sentence checkers against Ragas and picks one
 │   ├── verification/
-│   │   ├── guard_rails.py           # Removes citations to passages that were never retrieved
-│   │   └── grounding.py             # Splits answers into sentences and checks each one
+│   │   ├── citations.py             # Removes citations to passages that were never retrieved
+│   │   └── grounding.py             # Splits answers into sentences and drops the unsupported ones
 │   ├── observability/
 │   │   ├── store.py                 # Every question's trace in SQLite beside the index
 │   │   └── metrics.py               # Rates and per stage timings for the Observability tab
@@ -180,7 +192,8 @@ Voice_Enabled_RAG_Pipeline/
 │       ├── text_sanitizer.py        # Citation tags, and cleaning answers for speech
 │       ├── audio_utils.py           # Audio resampling and format conversion
 │       └── metrics.py               # Per-stage latency tracing
-├── tests/                           # 69 fast tests, 2 integration tests, 2 quality gate tests
+├── tests/                           # Grouped like src/: api, ingestion, index, retrieval, answers,
+│                                    # voice, observability, dashboard, pipeline, space, eval
 ├── app.py                           # Gradio dashboard entry point
 ├── main.py                          # FastAPI backend entry point
 ├── docker-compose.yml               # Ollama, API and dashboard containers
@@ -209,9 +222,9 @@ contain a trustworthy answer, the system refuses rather than inventing one.
    says it doesn't know. The language model is never called.
 5. **Answer under constraint.** The model writes an answer using only the supplied passages, with
    creativity switched off.
-6. **Check the answer.** Names and codes in the answer are checked against the retrieved text, and
-   citations to passages that weren't retrieved are removed. A failed check is reported in the
-   trace; it does not yet stop the answer. The file and page of each source are attached.
+6. **Check the answer.** A small judge model checks each sentence against the retrieved passages and
+   removes the ones they don't support; if none survive, the answer becomes a refusal. Citations to
+   passages that weren't retrieved are removed. The file and page of each source are attached.
 
 ---
 
@@ -230,7 +243,7 @@ tempt the system into making something up.
 The two Ragas scores average the 44 answered questions, graded by a local `llama3.1:8b` judge through
 Ollama. They come from one recorded run on 2026-08-21 over the Microsoft Azure Essentials book, before
 page level chunking (the index then had 224 chunks; it now has 379), and have not been rerun since.
-The full output is in [`docs/ragas_gate_run.txt`](docs/ragas_gate_run.txt).
+The full output is in [`assets/ragas_gate_run.txt`](assets/ragas_gate_run.txt).
 
 ## How fast is it?
 
@@ -469,7 +482,6 @@ Use Python 3.12, the version the Docker image and CI use:
 ```bash
 python3.12 -m venv dev-env
 ./dev-env/bin/pip install -r requirements.txt
-./dev-env/bin/python -m spacy download en_core_web_sm
 brew install tesseract     # on Linux: sudo apt install tesseract-ocr
 ```
 
@@ -538,7 +550,7 @@ python -m venv eval-env
     datasets==5.0.1 pandas==3.0.5 pytest==9.1.1 requests==2.34.2
 ollama pull llama3.1:8b
 
-./eval-env/bin/python -m pytest tests/eval_test.py -m ragas_ci -q -s
+./eval-env/bin/python -m pytest tests/eval/eval_test.py -m ragas_ci -q -s
 ```
 
 Leave the engine running while it does. Scores print in the terminal, and a per-question breakdown
@@ -632,7 +644,7 @@ The commands in this README are for macOS and Linux.
 ## Security
 
 There is no login: the API and dashboard are meant for your machine. (The live demo is a static site plus
-a separate PDF reader Space on Gradio 6; neither exposes the API or the dashboard.) What protects them (spec 0008):
+a separate PDF reader Space on Gradio 6; neither exposes the API or the dashboard.) What protects them:
 
 - **Other websites cannot change your corpus.** The API answers only to known host names, and refuses
   uploads, deletes and other changes sent from another site's page.

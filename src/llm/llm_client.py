@@ -28,7 +28,7 @@ class LocalLLMClient:
             print(f"[LLM] WARNING: unknown llm.answer_style {self.answer_style!r}, using 'full'")
             self.answer_style = "full"
         # Always a client with a timeout (per response or stream chunk), never the module default that waits
-        # forever (spec 0008, AC-11); host None means OLLAMA_HOST or the local default
+        # forever; host None means OLLAMA_HOST or the local default
         self.timeout_s = float(pick(None, "llm.timeout_s", 120))
         self.client = ollama.Client(host=host, timeout=self.timeout_s)
 
@@ -59,7 +59,7 @@ class LocalLLMClient:
         """The answer's tokens as Ollama streams them; the fallback refusal when no chunk passed the gate.
 
         The final chunk's token counts go to the request's tracer (`generation`) when one is given; an aborted
-        stream never sees that chunk, so its tokens are not counted (spec 0007)."""
+        stream never sees that chunk, so its tokens are not counted."""
         if not context_chunks:
             yield FALLBACK_RESPONSE
             return
@@ -67,7 +67,7 @@ class LocalLLMClient:
         messages = answer_messages(query, context_chunks, self.answer_style)
 
         # A failed or timed out call raises: the answer pipeline turns it into a short error with a reference,
-        # instead of the error text becoming part of a cached "answer" (spec 0008, AC-11)
+        # instead of the error text becoming part of a cached "answer"
         stream = self.client.chat(
             model=self.generation_model,
             messages=messages,

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 def token_counts(response) -> Tuple[int, int]:
     """Prompt and output tokens of one Ollama reply (`prompt_eval_count`, `eval_count`); a missing or null field
-    counts as 0 (spec 0007)."""
+    counts as 0."""
     def field(name):
         value = getattr(response, name, None)
         if value is None and isinstance(response, dict):

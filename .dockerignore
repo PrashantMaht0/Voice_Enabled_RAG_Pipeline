@@ -1,4 +1,4 @@
-# Allowlist (spec 0002): the image gets the app code and nothing else.
+# Allowlist: the image gets the app code and nothing else.
 # No .env, documents, index, model weights, virtualenvs, notes or git history.
 *
 !src/

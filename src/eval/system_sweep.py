@@ -1,4 +1,4 @@
-"""Two stage configuration sweep (spec 0005, child config-sweep).
+"""Two stage configuration sweep.
 
     python -m src.eval.system_sweep run [--stage A|B|all] [--skip-ragas] [--resume <run file>] [--apply]
 
@@ -31,7 +31,7 @@ from src.eval.table_benchmark import BenchmarkError, REPO_ROOT
 
 OUT_DIR = REPO_ROOT / "data" / "benchmarks"
 CONFIG_PATH = REPO_ROOT / "config" / "config.yaml"
-TABLE_PARSER = "layoutlmv3"              # spec 0004's winner, the same in every configuration
+TABLE_PARSER = "layoutlmv3"              # the table benchmark's winner, the same in every configuration
 INGEST_TIMEOUT_S = 3 * 60 * 60
 PS_POLL_S = 5
 NEAR_TIE = 2                             # configurations within this many answers of the top tie
@@ -154,7 +154,7 @@ def write_config(settings: dict, corpus: Path, workdir: Path) -> Path:
                                table_cache=False)
     config["llm"].update(generation_model=settings["generation_model"], rewriter_model=settings["rewriter_model"])
     config["llm"]["answer_style"] = settings.get("answer_style") or "full"      # a record without one used today's prompt
-    # Measurements record raw generations; the grounding benchmark reads them (spec 0006)
+    # Measurements record raw generations; the grounding benchmark reads them
     config.setdefault("grounding", {})["checker"] = "none"
     if settings.get("top_k_rerank") is not None:
         config["retrieval"]["top_k_rerank"] = int(settings["top_k_rerank"])
@@ -312,7 +312,7 @@ def run_config(cid: str, settings: dict, sets: tuple, corpus: Path, workdir: Pat
     return record
 
 
-# --- gates and the winner rule (AC-13) ---
+# --- gates and the winner rule ---
 
 def right(record: dict, key: str) -> int:
     """A record's right value and page count for tables or figures."""
@@ -387,7 +387,7 @@ def ragas(cid: str, record: dict, stamp: str) -> object:
             scores_path.unlink()
         env = dict(os.environ, VRAG_API_URL=f"{api.base}/query")
         # --noconftest: tests/conftest.py imports the API, whose packages eval-env deliberately leaves out
-        subprocess.run([str(REPO_ROOT / "eval-env" / "bin" / "python"), "-m", "pytest", "tests/eval_test.py",
+        subprocess.run([str(REPO_ROOT / "eval-env" / "bin" / "python"), "-m", "pytest", "tests/eval/eval_test.py",
                         "-m", "ragas_ci", "--noconftest", "-q", "-s"], cwd=REPO_ROOT, env=env)
     finally:
         api.stop()
@@ -435,7 +435,8 @@ def run_ragas(run: dict, order: list, stamp: str, path: Path):
 # --- apply ---
 
 def apply_winner(settings: dict):
-    """Writes the four model values into config/config.yaml, keeping its comments."""
+    """Writes the three model values (figure reader, answer and rewrite models) into config/config.yaml, keeping its
+    comments."""
     text = CONFIG_PATH.read_text(encoding="utf-8")
     for key in ("figure_parser", "generation_model", "rewriter_model"):
         text, n = re.subn(rf'^(\s+{key}:\s*)"[^"]*"', rf'\g<1>"{settings[key]}"', text, count=1, flags=re.M)
@@ -555,7 +556,7 @@ def print_report(run: dict, path: Path):
 def main(argv=None) -> int:
     """Command line entry: `python -m src.eval.system_sweep run [--stage A|B|all] [--apply] [--skip-ragas] [--resume
     FILE]`."""
-    parser = argparse.ArgumentParser(description="Two stage configuration sweep (spec 0005)")
+    parser = argparse.ArgumentParser(description="Two stage configuration sweep")
     sub = parser.add_subparsers(dest="command", required=True)
     run_parser = sub.add_parser("run", help="run the sweep through the real API")
     run_parser.add_argument("--stage", choices=("A", "B", "all"), default="all")

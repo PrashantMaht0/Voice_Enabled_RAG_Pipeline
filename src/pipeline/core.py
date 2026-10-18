@@ -1,4 +1,4 @@
-"""The one answer pipeline as steps (spec 0009): rewrite, the empty question rule, the cache, retrieval and the
+"""The one answer pipeline as steps: rewrite, the empty question rule, the cache, retrieval and the
 confidence gate, streamed generation with a sentence by sentence grounding check, and citations.
 
 `answer` is a plain generator. It yields two kinds of item:
@@ -11,7 +11,7 @@ an error or a disconnect.
 The server answers `Retrieve`, `Rewrite` and `Generate` with its own objects (which call the same rules); the
 browser answers `Retrieve` with None, and the core then runs the retrieval steps itself."""
 import time
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, Optional
 
 from src.pipeline.limits import check_history, check_query
 from src.pipeline.prompts import answer_messages, clean_rewrite, refers_back, rewrite_messages
@@ -93,7 +93,7 @@ def answer(request: Dict, settings: Settings, record: Dict, docs: Optional[Itera
     record["search_query"] = search_query
 
     if grounding.is_empty_query(search_query):
-        # Nothing to search for: no cache, retrieval or answer model (spec 0006, AC-5)
+        # Nothing to search for: no cache, retrieval or answer model
         text = grounding.EMPTY_QUERY_ANSWER
         yield span("empty_query", "No content words — refused before retrieval")
         record.update(path="empty_query", answer=text)
@@ -149,6 +149,7 @@ def answer(request: Dict, settings: Settings, record: Dict, docs: Optional[Itera
                         "messages": answer_messages(search_query, chunks, settings.answer_style)}
         judge = grounding.JudgeSteps(chunks, (opened or {}).get("checker", settings.checker),
                                      settings.grounding_threshold)
+        judge.result.unchecked_reason = (opened or {}).get("unchecked")
         buffer, index, usage = grounding.SentenceBuffer(), 0, {}
         while True:
             item = yield {"effect": "NextToken"}
@@ -197,7 +198,8 @@ def answer(request: Dict, settings: Settings, record: Dict, docs: Optional[Itera
                "grounded": grounded, "dropped_citations": record.get("dropped_citations", []),
                "dropped_sentences": dropped, "sentences": sentences, "path": path,
                "retrieved": details, "grounding_checker": checker, "generation": generation}
-    yield {"effect": "CacheStore", "search_query": search_query, "payload": payload}
+    if not (result and result.unchecked_reason):         # an answer the checker missed is not replayed later
+        yield {"effect": "CacheStore", "search_query": search_query, "payload": payload}
     record.update(path=path, answer=text, dropped=dropped, grounding_checker=checker,
                   kept=len(sentences) if result else None)
     yield {"type": "done", "answer": text, "citations": citations, "grounded": grounded, "path": path,

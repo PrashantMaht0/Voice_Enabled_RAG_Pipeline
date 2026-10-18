@@ -27,16 +27,6 @@
    "dtype": "fp32",
    "max_tokens": 512
   },
-  "nli": {
-   "id": "Xenova/nli-deberta-v3-small",
-   "revision": "6bc2a55c7c0f",
-   "dtype_f16": "fp16",
-   "dtype": "fp32",
-   "max_tokens": 512,
-   "premise_tokens": 64,
-   "overlap_tokens": 24,
-   "max_sentence_tokens": 256
-  },
   "whisper": {
    "id": "onnx-community/whisper-base.en",
    "revision": "51eefc0af78b",

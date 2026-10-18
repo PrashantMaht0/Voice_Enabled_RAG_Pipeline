@@ -6,7 +6,7 @@
 #   Use Ollama on the host instead (GPU speed on a Mac):
 #     VRAG_OLLAMA_HOST=http://host.docker.internal:11434 docker compose up
 #   Start over (deletes documents, index, models and caches):  docker compose down -v
-#   Volumes made before the app ran as a non root user (spec 0008) need, once:
+#   Volumes made before the app ran as a non root user need, once:
 #     docker compose run --rm --user root api chown -R 10001:10001 /app/data /app/vectordb /cache
 
 x-app-env: &app-env
@@ -19,7 +19,7 @@ x-app-env: &app-env
 
 services:
   ollama:
-    image: ollama/ollama:0.32.5      # pinned (spec 0008): the version this project runs; bump deliberately
+    image: ollama/ollama:0.32.5      # pinned: the version this project runs; bump deliberately
     # No published port: the other services reach it over the compose network,
     # so it never clashes with an Ollama already running on the host.
     volumes:
@@ -33,11 +33,11 @@ services:
   api:
     build: .
     image: vrag-app
-    # --no-proxy-headers: a forwarded header can never make a remote caller look like loopback (spec 0008)
+    # --no-proxy-headers: a forwarded header can never make a remote caller look like loopback
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --no-proxy-headers
     restart: unless-stopped
     ports:
-      # This machine only: the API has no login and serves your stored questions (spec 0006)
+      # This machine only: the API has no login and serves your stored questions
       - "127.0.0.1:8000:8000"
     environment: *app-env
     extra_hosts:
@@ -63,7 +63,7 @@ services:
     command: python app.py
     restart: unless-stopped
     ports:
-      # This machine only: the Observability tab shows your stored questions (spec 0006)
+      # This machine only: the Observability tab shows your stored questions
       - "127.0.0.1:7860:7860"
     environment:
       VRAG_API_BASE: http://api:8000/api

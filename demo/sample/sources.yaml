@@ -1,4 +1,4 @@
-# The live demo's sample corpus (spec 0009, AC-3). Every document here may be redistributed; the page lists each
+# The live demo's sample corpus. Every document here may be redistributed; the page lists each
 # one with its license and source link. Picked and checked on 2026-10-16.
 documents:
   - name: census-health-insurance-2023.pdf

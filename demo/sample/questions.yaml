@@ -1,4 +1,4 @@
-# Suggested questions on the live demo (spec 0009, AC-3). Each passes when its answer cites expected_doc on one of
+# Suggested questions on the live demo. Each passes when its answer cites expected_doc on one of
 # expected_pages (at temperature 0). Drafted 2026-10-16 from the built chunks; answers noted for reference.
 questions:
   - question: "What is the forecast Brent crude oil spot price per barrel for 2027?"

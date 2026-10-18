@@ -1,4 +1,4 @@
-"""Sentence level grounding (spec 0006): split an answer into sentences and check each against its sources.
+"""Sentence level grounding: split an answer into sentences and check each against its sources.
 
 Every answer passes through here before it is shown or spoken. With `grounding.checker: none` every
 sentence is kept unchecked, so answers are exactly what the model wrote.
@@ -111,7 +111,21 @@ def word_count(sentence: str) -> int:
     return len(re.findall(r"[^\W_]+", plain(sentence)))
 
 
-# --- empty queries (spec 0006, AC-5) ---
+CLAUSE_BREAK = re.compile(r"[,;:]\s*|\s+(?:though|although|but|however|yet|while|whereas)\s+", re.I)
+LEAD_IN = re.compile(r"^(?:based on|according to|from|in|after reviewing|looking at)\s+(?:the\s+)?"
+                     r"(?:provided\s+|given\s+|available\s+)?(?:context|documents?|documentation|passages?|"
+                     r"information|sources?)$", re.I)
+
+
+def only_refusal(sentence: str) -> bool:
+    """True when every clause of the sentence is a refusal or a lead in such as "Based on the provided context".
+    A claim with a refusal attached ("X is 900, though this is not explicitly stated ...") still asserts X."""
+    clauses = [c.strip(" .!?") for c in CLAUSE_BREAK.split(plain(sentence))]
+    clauses = [c for c in clauses if c]
+    return any(is_refusal(c) for c in clauses) and all(is_refusal(c) or LEAD_IN.match(c) for c in clauses)
+
+
+# --- empty queries ---
 
 EMPTY_QUERY_ANSWER = "Please ask a full question."
 STOPWORDS = frozenset("a an the is are was what who how why when where which do does did it this that you i me my "
@@ -124,7 +138,7 @@ def content_words(query: str) -> List[str]:
 
 
 def is_empty_query(query: str) -> bool:
-    """True when the query has no content words (spec 0006, AC-5)."""
+    """True when the query has no content words."""
     return not content_words(query)
 
 
@@ -152,6 +166,7 @@ JUDGE_PROMPT = ("Context:\n{context}\n\nStatement: {sentence}\n\n"
 JUDGE_SCHEMA = {"type": "object", "properties": {"supported": {"type": "string", "enum": ["yes", "no"]}},
                 "required": ["supported"]}
 RETRY_AFTER_S = 60
+LIST_TIMEOUT_S = 5                       # asking Ollama which models are pulled
 
 
 def judge_messages(context: str, sentence: str) -> List[dict]:
@@ -166,7 +181,7 @@ def judge_verdict(reply: str) -> Optional[bool]:
         answer = json.loads(reply or "").get("supported")
     except (ValueError, AttributeError):
         return None
-    return {"yes": True, "no": False}.get(answer)
+    return {"yes": True, "no": False}.get(answer) if isinstance(answer, str) else None
 
 
 def chunk_body(chunk: str) -> str:
@@ -256,7 +271,7 @@ class JudgeChecker:
     def __init__(self, model: str = None, timeout: float = 60.0):
         import ollama
         self.model_name = model or get("grounding.judge_model", "llama3.2:1b")
-        names = {m.model for m in ollama.list().models}
+        names = {m.model for m in ollama.Client(timeout=LIST_TIMEOUT_S).list().models}
         if self.model_name not in names and f"{self.model_name}:latest" not in names:
             raise RuntimeError(f"Ollama model {self.model_name!r} is not pulled; run `ollama pull {self.model_name}`")
         self.client = ollama.Client(timeout=timeout)
@@ -269,7 +284,7 @@ class JudgeChecker:
 
     def ask_with_usage(self, context: str, sentence: str) -> Tuple[Optional[bool], int, int]:
         """The verdict plus the call's prompt and output tokens. The checker is shared by every request, so the
-        counts are returned, never kept here (spec 0007)."""
+        counts are returned, never kept here."""
         response = self.client.chat(
             model=self.model_name, messages=judge_messages(context, sentence),
             format=JUDGE_SCHEMA, options={"temperature": 0, "num_predict": 20, "num_ctx": 4096})
@@ -324,12 +339,23 @@ def check_grounding_checker():
 
 
 def effective_checker():
-    """The checker in use: built on first use, and built again a minute after a failure."""
+    """The checker in use: built on first use. A minute after a failure one background thread builds it again,
+    so no request or health check waits on Ollama; the pass through keeps serving until the build succeeds."""
+    global _checker_failed_at
     if _checker is None:
         return check_grounding_checker()
-    if _checker_failed_at is not None and time.monotonic() - _checker_failed_at > RETRY_AFTER_S:
-        return check_grounding_checker()
+    with _checker_lock:
+        retry = _checker_failed_at is not None and time.monotonic() - _checker_failed_at > RETRY_AFTER_S
+        if retry:
+            _checker_failed_at = time.monotonic()        # later callers wait for this attempt instead of starting one
+    if retry:
+        threading.Thread(target=check_grounding_checker, name="grounding-checker", daemon=True).start()
     return _checker
+
+
+def checker_unavailable() -> bool:
+    """True while the configured checker failed to load and answers go out unchecked."""
+    return _checker_failed_at is not None
 
 
 def effective_checker_name() -> str:
@@ -361,7 +387,7 @@ class GroundingResult:
 
 
 class JudgeSteps:
-    """The drop policy, sentence by sentence, as steps (spec 0009): `judge_steps` yields a `CheckSentence` effect
+    """The drop policy, sentence by sentence, as steps: `judge_steps` yields a `CheckSentence` effect
     when a sentence needs a verdict, and whoever drives it sends back `{scores}` (entailment per window),
     `{verdict}` (True, False or None) or `{error}`. The server and the browser demo share this one copy."""
     def __init__(self, chunks: List[str], checker_name: Optional[str] = None, threshold: float = 0.5):
@@ -373,14 +399,13 @@ class JudgeSteps:
         self._evidence = None
 
     def check_effect(self, sentence: str) -> dict:
-        """What a checker needs: the sentence, every window of every chunk (NLI), the whole context, and the
-        judge's ready made messages and reply schema (so a browser judge asks exactly what the server asks)."""
+        """What a checker needs: the sentence, the whole context, and the judge's ready made messages and reply
+        schema (so a browser judge asks exactly what the server asks). A server NLI checker windows the chunks
+        itself."""
         if self._evidence is None:
-            bodies = [chunk_body(c) for c in self.chunks]
-            self._evidence = ([w for b in bodies for w in windows(b)], "\n\n".join(bodies))
-        return {"effect": "CheckSentence", "sentence": sentence, "windows": self._evidence[0],
-                "context": self._evidence[1],
-                "judge": {"messages": judge_messages(self._evidence[1], sentence), "schema": JUDGE_SCHEMA}}
+            self._evidence = "\n\n".join(chunk_body(c) for c in self.chunks)
+        return {"effect": "CheckSentence", "sentence": sentence, "context": self._evidence,
+                "judge": {"messages": judge_messages(self._evidence, sentence), "schema": JUDGE_SCHEMA}}
 
     def _check(self, sentence: str):
         """One sentence's verdict; a checker error or timeout fails open for the rest of this answer."""
@@ -408,7 +433,7 @@ class JudgeSteps:
     def judge_steps(self, sentence: str):
         """Sentences that may be shown now (possibly none, possibly held short ones too), as the generator's
         return value."""
-        if is_refusal(sentence):
+        if only_refusal(sentence):
             self.result.model_refused = True
             return self._keep(sentence)
         if word_count(sentence) < MIN_CHECK_WORDS and self.checker_name is not None:
@@ -440,7 +465,7 @@ class JudgeSteps:
     @property
     def refused(self) -> bool:
         """Every checked sentence was dropped: the answer becomes a refusal."""
-        return bool(self.result.dropped) and not any(not is_refusal(k) for k in self.result.kept) \
+        return bool(self.result.dropped) and not any(not only_refusal(k) for k in self.result.kept) \
             and not self.result.model_refused
 
 

@@ -1,4 +1,4 @@
-# The PDF reader's dependencies (spec 0009). ZeroGPU accepts torch 2.8.0, 2.9.1, 2.10.0 or 2.11.0 only, with the
+# The PDF reader's dependencies. ZeroGPU accepts torch 2.8.0, 2.9.1, 2.10.0 or 2.11.0 only, with the
 # matching torchvision; gradio comes from sdk_version and spaces from the platform (never pin it here).
 torch==2.11.0
 torchvision==0.26.0

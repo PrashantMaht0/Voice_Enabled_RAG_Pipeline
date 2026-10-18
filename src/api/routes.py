@@ -13,7 +13,7 @@ from typing import Dict, List, Literal, Optional
 import ollama
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from qdrant_client import models
 
 from src.api import guards
@@ -41,7 +41,7 @@ router = APIRouter()
 
 RAW_DIR = get("paths.raw_data_dir", "data/raw")
 DOCUMENT_TYPES = (".pdf", ".md", ".txt")
-INCOMING = ".incoming"                 # uploads are checked here before they join the corpus (spec 0008)
+INCOMING = ".incoming"                 # uploads are checked here before they join the corpus
 
 # Heavy models are loaded once per process, not per request.
 _retriever = None
@@ -112,10 +112,10 @@ def warmup():
 
 class QueryRequest(BaseModel):
     """A question, with the conversation so far (used only to rewrite follow ups into standalone questions).
-    Sizes are limited (spec 0008, AC-4) so one request cannot send a huge prompt to the models."""
+    Sizes are limited so one request cannot send a huge prompt to the models."""
     query: str
     history: List[Dict[str, str]] = []
-    channel: Literal["typed", "voice"] = "typed"     # recorded in the trace (spec 0006)
+    channel: Literal["typed", "voice"] = "typed"     # recorded in the trace
 
     @field_validator("query")
     @classmethod
@@ -143,7 +143,7 @@ def corpus_files(raw_dir: str = None) -> list:
 
 
 def build_generation(db_manager=None, cancel: threading.Event = None):
-    """Builds a new index generation from data/raw and swaps it in (spec 0008). The only way the API builds:
+    """Builds a new index generation from data/raw and swaps it in. The only way the API builds:
     one at a time under a lock. Raises on failure, leaving the previous generation and its marker serving."""
     with _build_lock:
         # Embedded Qdrant is single-handle, so this reuses the process-wide manager.
@@ -164,7 +164,7 @@ def retire(db_manager, number: int):
     timer = threading.Timer(float(get("index.retire_after_s", 30)), db_manager.drop_generation, [number])
     timer.daemon = True
     timer.start()
-    _retire_timers.append(timer)
+    _retire_timers[:] = [t for t in _retire_timers if t.is_alive()] + [timer]
 
 
 def rebuild_index(db_manager=None) -> bool:
@@ -229,7 +229,7 @@ _ollama_check = {"at": None, "status": None}
 
 
 def ollama_status() -> str:
-    """`online` or `offline`, asked with a short timeout and reused for health.cache_s seconds (spec 0008)."""
+    """`online` or `offline`, asked with a short timeout and reused for health.cache_s seconds."""
     now = time.monotonic()
     if _ollama_check["at"] is not None and now - _ollama_check["at"] < float(get("health.cache_s", 10)):
         return _ollama_check["status"]
@@ -349,7 +349,7 @@ def trace_config() -> Dict:
               "rewriter_model": getattr(llm, "rewriter_model", None),
               "answer_style": getattr(llm, "answer_style", None),
               "grounding_checker": grounding.effective_checker_name()}
-    if tables._effective_parser is not None and figures._effective_parser is not None:
+    if tables.parser_checked() and figures.parser_checked():
         config["index"] = index_fingerprint()
     return config
 
@@ -360,7 +360,7 @@ def server_settings() -> Settings:
 
 
 def answer_events(request: QueryRequest):
-    """The one answer pipeline (spec 0006), driven for the server (spec 0009): `core.answer` decides everything,
+    """The one answer pipeline, driven for the server: `core.answer` decides everything,
     and this loop answers its effects through the server's objects and hooks. Both query endpoints use it."""
     started = time.perf_counter()
     tracer = PipelineTracer()
@@ -388,7 +388,9 @@ def answer_events(request: QueryRequest):
         elif kind == "Generate":
             state.update(checker=grounding.effective_checker(), chunks=effect["chunks"],
                          stream=iter(generate_tokens(effect["search_query"], effect["chunks"], tracer)))
-            return {"checker": state["checker"].name}
+            unavailable = state["checker"].name is None and grounding.checker_unavailable()
+            return {"checker": state["checker"].name,
+                    "unchecked": "the grounding checker is unavailable" if unavailable else None}
         elif kind == "NextToken":
             try:
                 return {"token": next(state["stream"])}
@@ -432,7 +434,7 @@ def answer_events(request: QueryRequest):
     finally:
         steps.close()
         if state.get("stream") is not None and hasattr(state["stream"], "close"):
-            state["stream"].close()             # an answer stopped early never counts its tokens (spec 0007)
+            state["stream"].close()             # an answer stopped early never counts its tokens
         tracer.print_trace()
         dropped = record.get("dropped") or []
         prompt_tokens, output_tokens = tracer.token_totals()
@@ -497,7 +499,7 @@ class SlotStreamingResponse(StreamingResponse):
 @router.post("/query/stream")
 def stream_query(request: QueryRequest):
     """ndjson events: meta, one sentence per approved sentence, then done (or error). The answer slot is taken
-    before the stream starts and released exactly once, by whichever ends first (spec 0008, AC-12)."""
+    before the stream starts and released exactly once, by whichever ends first."""
     token = guards.slots.try_acquire()
     if token is None:
         return guards.busy_response()
@@ -512,16 +514,20 @@ def stream_query(request: QueryRequest):
     return SlotStreamingResponse(events(), token, media_type="application/x-ndjson")
 
 
+MAX_VOICE_MS = 600_000                 # ten minutes; a real voice turn is far shorter
+
+
 class VoiceTimings(BaseModel):
-    """Speech timings the dashboard measured for a voice turn, in milliseconds."""
-    stt_ms: Optional[float] = None
-    first_audio_ms: Optional[float] = None
-    spoken_total_ms: Optional[float] = None
+    """Speech timings the dashboard measured for a voice turn, in milliseconds (finite, 0 to ten minutes, so
+    the metrics stay serializable)."""
+    stt_ms: Optional[float] = Field(None, ge=0, le=MAX_VOICE_MS, allow_inf_nan=False)
+    first_audio_ms: Optional[float] = Field(None, ge=0, le=MAX_VOICE_MS, allow_inf_nan=False)
+    spoken_total_ms: Optional[float] = Field(None, ge=0, le=MAX_VOICE_MS, allow_inf_nan=False)
 
 
 @router.post("/traces/{trace_id}/voice")
 def add_voice_timings(trace_id: int, timings: VoiceTimings):
-    """The dashboard reports a voice turn's speech timings (spec 0006); only the API writes traces."""
+    """The dashboard reports a voice turn's speech timings; only the API writes traces."""
     if not get_traces().add_voice(trace_id, **timings.model_dump()):
         raise HTTPException(status_code=404, detail=f"No trace {trace_id}.")
     return {"updated": trace_id}
@@ -537,7 +543,7 @@ def get_metrics(window: Literal["1h", "24h", "7d", "all"] = "24h"):
 @router.get("/traces")
 def list_traces(limit: int = Query(50, ge=1, le=200), window: Literal["1h", "24h", "7d", "all"] = "all"):
     """The most recent finished traces in the window, newest first: summary fields, tokens and whether each
-    counts as answered (spec 0007)."""
+    counts as answered."""
     from src.observability import metrics
     items = get_traces().recent(limit, since=metrics.since(window))
     for item in items:
@@ -555,7 +561,7 @@ def get_trace(trace_id: int):
 
 
 def check_contents(path: str, name: str):
-    """The file is what its name says (shared check, spec 0008 AC-5), as the API's HTTP error."""
+    """The file is what its name says (shared check), as the API's HTTP error."""
     try:
         upload_checks.check_contents(path, name, int(get("upload.max_pdf_pages", 300)))
     except upload_checks.UploadRefused as e:

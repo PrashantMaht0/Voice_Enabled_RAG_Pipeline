@@ -1,4 +1,4 @@
-"""Table detection and reading for PDF pages (spec 0004).
+"""Table detection and reading for PDF pages.
 
 A Table Transformer model flags the pages that hold tables; only those pages go to the
 configured reader, which writes each table as Markdown. With `table_parser: none` nothing
@@ -36,7 +36,7 @@ VLM_PROMPT = ("Extract every table on this page as a GitHub Markdown table, head
 # Bumped whenever a reader's code or prompt changes, so cached reads go stale.
 READER_VERSION = {"pdfplumber": 1, "qwen2.5vl:3b": 1, "qwen2.5vl:7b": 1, "layoutlmv3": 1}
 
-# Call counters (AC-7): one per detector forward pass, one per reader call (cache hits excluded).
+# Call counters: one per detector forward pass, one per reader call (cache hits excluded).
 detector_calls = 0
 reader_calls = 0
 
@@ -95,13 +95,18 @@ def check_table_parser() -> str:
     return _effective_parser
 
 
+def parser_checked() -> bool:
+    """True once the table reader in use is known, so callers can report it without triggering the check."""
+    return _effective_parser is not None
+
+
 def effective_parser() -> str:
     """The table reader actually in use (checked once; `none` when the configured one cannot load)."""
     return _effective_parser if _effective_parser is not None else check_table_parser()
 
 
 def table_fingerprint(parser: str = None) -> str:
-    """Everything that changes the table chunks; stored in the index marker (AC-8)."""
+    """Everything that changes the table chunks; stored in the index marker."""
     parser = parser or effective_parser()
     if parser == "none":
         return "none"
@@ -180,7 +185,7 @@ def _column_count(line: str) -> int:
 
 
 def parse_vlm_reply(reply: str) -> List[str]:
-    """Valid Markdown tables in a VLM reply, per the spec's output rules."""
+    """Valid Markdown tables in a VLM reply, per the reader's output rules."""
     text = re.sub(r"```[a-zA-Z]*", "", reply or "").strip()
     if not text or text.lower().startswith("none"):
         return []
@@ -252,7 +257,7 @@ def render(pdfium_page, longest_px: int):
 # --- the detector ---
 
 def torch_device() -> str:
-    """CUDA when present (the live demo's ZeroGPU Space, spec 0009), else MPS, else CPU."""
+    """CUDA when present (the live demo's ZeroGPU Space), else MPS, else CPU."""
     import torch
     if torch.cuda.is_available():
         return "cuda"
@@ -270,7 +275,6 @@ class TableDetector:
     def load(self):
         """Loads the Table Transformer once (CUDA or MPS when available, else CPU)."""
         if self.model is None:
-            import torch
             from transformers import AutoImageProcessor, TableTransformerForObjectDetection
             name, revision = self.settings["model"], self.settings["revision"]
             self.processor = AutoImageProcessor.from_pretrained(name, revision=revision)
@@ -458,7 +462,6 @@ class LayoutModel:
         if self.model is None:
             if not self.name:
                 raise RuntimeError("ingestion.table_model is not set")
-            import torch
             from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
             self.processor = LayoutLMv3Processor.from_pretrained(self.name, revision=self.revision, apply_ocr=False)
             model = LayoutLMv3ForTokenClassification.from_pretrained(self.name, revision=self.revision).eval()
@@ -605,7 +608,7 @@ class TableExtractor:
         self.use_cache = bool(get("ingestion.table_cache", True)) if use_cache is None else use_cache
         self._detector = detector
         self._read_key: Optional[str] = None
-        # Table boxes per page from the last extract, shared with the figure pass (spec 0005)
+        # Table boxes per page from the last extract, shared with the figure pass
         self.page_boxes: Optional[Dict[int, List[Dict]]] = None
 
     @property

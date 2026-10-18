@@ -1,4 +1,4 @@
-"""The browser demo's index and the Pyodide bridge (spec 0009). Runs in CPython and in Pyodide (demo/pyodide-runner);
+"""The browser demo's index and the Pyodide bridge. Runs in CPython and in Pyodide (demo/pyodide-runner);
 imports only numpy, the demo code and the standard library."""
 import json
 import os
@@ -9,7 +9,7 @@ import pytest
 
 from src.demo_index import DemoIndex, tokens
 
-sys.path.insert(0, os.path.join(os.getcwd(), "demo", "py"))
+sys.path.insert(0, os.path.join(os.getcwd(), "demo", "python"))
 import bridge                                            # noqa: E402
 
 DIMS = 4
@@ -36,13 +36,11 @@ def sample_index():
 
 
 def test_tokens_follow_tantivys_default_analyzer():
-    """covers: AC-4"""
     assert tokens("Brent-crude OIL, $84/bbl!") == ["brent", "crude", "oil", "84", "bbl"]
     assert tokens("x" * 41 + " ok") == ["ok"]
 
 
 def test_dense_search_ranks_by_cosine_and_keeps_the_server_candidate_shape():
-    """covers: AC-4"""
     hits = sample_index().search_dense(unit(0.1, 0, 1, 0), top_k=2)
 
     assert [h["id"] for h in hits] == ["health.pdf-0", "energy.pdf-0"]
@@ -51,7 +49,6 @@ def test_dense_search_ranks_by_cosine_and_keeps_the_server_candidate_shape():
 
 
 def test_keyword_search_scores_matching_chunks_by_bm25():
-    """covers: AC-4"""
     hits = sample_index().search_sparse("crude oil price", top_k=5)
 
     assert [h["id"] for h in hits] == ["energy.pdf-0"]
@@ -63,7 +60,6 @@ def test_a_query_with_no_searchable_term_finds_nothing():
 
 
 def test_the_scope_limits_both_searches_to_the_chosen_documents():
-    """covers: AC-10"""
     index = sample_index()
 
     assert {h["metadata"]["source"] for h in index.search_dense(unit(1, 1, 1, 0), 5, ["health.pdf"])} == {"health.pdf"}
@@ -71,7 +67,6 @@ def test_the_scope_limits_both_searches_to_the_chosen_documents():
 
 
 def test_removing_a_document_removes_its_chunks():
-    """covers: AC-9"""
     index = sample_index()
 
     index.remove_doc("energy.pdf")
@@ -80,7 +75,6 @@ def test_removing_a_document_removes_its_chunks():
 
 
 def test_the_bridge_answers_searches_itself_and_hands_other_effects_to_the_page():
-    """covers: AC-4"""
     bridge.index = sample_index()
     bridge.configure(json.dumps({"top_k_rerank": 3, "confidence_threshold": 0.84, "checker": "nli:x"}))
 
@@ -101,8 +95,17 @@ def test_the_bridge_answers_searches_itself_and_hands_other_effects_to_the_page(
     bridge.stop()
 
 
+def test_a_step_after_stop_ends_quietly():
+    bridge.index = sample_index()
+    bridge.configure(json.dumps({"top_k_rerank": 3, "confidence_threshold": 0.84, "checker": "nli:x"}))
+    bridge.start(json.dumps({"query": "What is the crude oil price?", "history": []}), "null", False)
+
+    bridge.stop()
+
+    assert json.loads(bridge.step("null")) == {"end": True, "stopped": True}
+
+
 def test_an_oversized_question_returns_its_reason():
-    """covers: AC-4"""
     bridge.configure(json.dumps({"max_query_chars": 10}))
 
     reply = json.loads(bridge.start(json.dumps({"query": "x" * 11, "history": []}), "null", False))
@@ -111,7 +114,7 @@ def test_an_oversized_question_returns_its_reason():
 
 
 def test_the_bridge_computes_the_dashboards_metrics_over_browser_traces():
-    """The same summarize the dashboard uses (src/observability/metrics.py). covers: AC-12"""
+    """The same summarize the dashboard uses (src/observability/metrics.py)."""
     base = {"answer": None, "confidence": None, "grounding_checker": None, "sentences_dropped": None,
             "total_ms": None, "first_sentence_ms": None, "stt_ms": None, "first_audio_ms": None,
             "spoken_total_ms": None, "prompt_tokens": None, "output_tokens": None}
@@ -130,7 +133,6 @@ def test_the_bridge_computes_the_dashboards_metrics_over_browser_traces():
 
 
 def test_an_upload_joins_the_index_and_clearing_uploads_keeps_the_sample():
-    """covers: AC-7, AC-9, AC-10"""
     bridge.index = DemoIndex(dims=DIMS)
     sample = [chunk("energy.pdf", 0, "Brent crude oil price.")]
     bridge.load_sample(json.dumps(sample), unit(1, 0, 0, 0).tobytes())
@@ -172,7 +174,6 @@ def drive(grounding, check_reply):
 
 
 def test_nli_scores_from_the_page_drop_an_unsupported_sentence():
-    """covers: AC-5"""
     seen, events, record = drive(True, lambda s: {"scores": [0.1] if "aliens" in s else [0.1, 0.93]})
 
     done = next(e for e in events if e["type"] == "done")
@@ -182,7 +183,6 @@ def test_nli_scores_from_the_page_drop_an_unsupported_sentence():
 
 
 def test_with_the_switch_off_the_bridge_answers_the_check_and_the_answer_is_unchecked():
-    """covers: AC-5"""
     seen, events, record = drive(False, lambda s: pytest.fail("the page was asked to check a sentence"))
 
     done = next(e for e in events if e["type"] == "done")
@@ -192,7 +192,6 @@ def test_with_the_switch_off_the_bridge_answers_the_check_and_the_answer_is_unch
 
 
 def test_a_failed_nli_model_fails_open_with_its_reason():
-    """covers: AC-5"""
     _, events, record = drive(True, lambda s: {"error": "the grounding model did not load"})
 
     done = next(e for e in events if e["type"] == "done")
@@ -201,7 +200,6 @@ def test_a_failed_nli_model_fails_open_with_its_reason():
 
 
 def test_the_bridge_speaks_with_the_servers_cleanup_and_hears_filler_as_silence():
-    """covers: AC-6"""
     pieces = json.loads(bridge.speech("The **price** is $84 [Source: energy.pdf | Page: 3]."))
 
     assert pieces == ["The price is $84."]

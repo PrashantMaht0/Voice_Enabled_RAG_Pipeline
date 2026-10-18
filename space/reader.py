@@ -1,6 +1,9 @@
-"""Reading one upload for the live demo (spec 0009, build task 7): the shared upload checks, the pipeline's own
+"""Reading one upload for the live demo: the shared upload checks, the pipeline's own
 ingestion (layoutlmv3 tables, Qwen2.5 VL figures), the limits, and the per address daily cap. No Gradio here, so
 it runs and is tested anywhere; app.py wraps it for the Space."""
+import contextlib
+import hashlib
+import io
 import ipaddress
 import os
 import shutil
@@ -75,11 +78,18 @@ def prepare(source: str, name: str) -> Tuple[str, Optional[int]]:
     return folder, pages
 
 
+def log_name(name: str) -> str:
+    """A short fingerprint of a visitor's file name, so the log can tell uploads apart without naming them."""
+    return hashlib.sha256((name or "").encode("utf-8")).hexdigest()[:8]
+
+
 def read(folder: str) -> List[Dict]:
-    """The pipeline's own reading and chunking of the one file in `folder`, as the demo's chunk records."""
+    """The pipeline's own reading and chunking of the one file in `folder`, as the demo's chunk records. The
+    ingestion's own log lines name the file and quote reader errors, so they are discarded here."""
     from src.ingestion.chunking import DocumentChunker
     from src.ingestion.loader import DocumentLoader
-    chunks = DocumentChunker().chunk_documents(DocumentLoader(raw_data_dir=folder).load_documents())
+    with contextlib.redirect_stdout(io.StringIO()):
+        chunks = DocumentChunker().chunk_documents(DocumentLoader(raw_data_dir=folder).load_documents())
     max_chunks = limit("MAX_CHUNKS", 2000)
     if len(chunks) > max_chunks:
         raise UploadRefused("too_many_chunks", 413, f"The document makes {len(chunks)} chunks; the limit is {max_chunks}.")

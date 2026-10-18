@@ -1,4 +1,4 @@
-"""Context size runner (spec 0006, AC-10): should the answer model read 3 passages instead of 5?
+"""Context size runner: should the answer model read 3 passages instead of 5?
 
     python -m src.eval.context_size run [--apply] [--skip-ragas]
 
@@ -53,7 +53,7 @@ def reusable_index(settings: dict):
 
 def gates(record: dict, base: dict) -> dict:
     """The gates a setting must pass against the 5 chunk run: trick questions refused, 90% answered, faithfulness,
-    tables and figures within 2 (spec 0006, AC-10)."""
+    tables and figures within 2."""
     g = record["golden"]
     ragas = record.get("ragas")
     return {
@@ -147,7 +147,7 @@ def print_report(result: dict, path: Path):
 
 def main(argv=None) -> int:
     """Command line entry: `python -m src.eval.context_size run [--apply] [--skip-ragas]`."""
-    parser = argparse.ArgumentParser(description="Context size runner (spec 0006)")
+    parser = argparse.ArgumentParser(description="Context size runner")
     sub = parser.add_subparsers(dest="command", required=True)
     run_parser = sub.add_parser("run")
     run_parser.add_argument("--apply", action="store_true", help="write the chosen top_k_rerank to config.yaml")

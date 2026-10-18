@@ -1,18 +1,19 @@
-// The V-RAG live demo page (spec 0009): the dashboard's three tabs (Ask, Documents, Observability) in a browser.
+// The V-RAG live demo page: the dashboard's three tabs (Ask, Documents, Observability) in a browser.
 // Before Load it fetches only itself, the sample index (chunks, manifest, suggested questions) and config.json;
 // Load fetches the models, Pyodide and the sample vectors. Every piece of document text is set with textContent.
 import type { MLCEngineInterface } from "@mlc-ai/web-llm";
-import { addTrace, getSetting, listTraces, putSetting, type Trace } from "./db";
-import { inspectDevice, type DeviceInfo } from "./device";
-import { attachModels, initDocuments, scopeDocs, type SampleDoc } from "./documents";
-import { Driver, type Event as CoreEvent } from "./driver";
-import { WorkerRpc, type Progress } from "./rpc";
-import type { UploadLimits } from "./uploads";
-import { MicBlocked, peakRms, QUIET_RMS, Recorder, Speaker } from "./voice";
+import { addTrace, getSetting, listTraces, putSetting, type Trace } from "./shared/db";
+import { inspectDevice, type DeviceInfo } from "./models/device";
+import { attachModels, detachModels, initDocuments, scopeDocs, type SampleDoc } from "./documents/documents";
+import { Driver, type Event as CoreEvent } from "./pipeline/driver";
+import { WorkerRpc, type Progress } from "./shared/rpc";
+import type { UploadLimits } from "./documents/uploads";
+import { MicBlocked, peakRms, QUIET_RMS, Recorder, Speaker } from "./voice/voice";
 
 const BASE = import.meta.env.BASE_URL;
 const HISTORY_TURNS = 6;
 const TURN_CHARS = 2000;
+const JUDGE_PREFIX_MARKER = "\n\nStatement:";     // where judge_messages starts the per sentence part
 
 type Pinned = { id: string; revision: string; dtype?: string; max_tokens?: number };
 type AnswerModel = { f16: string; f32: string; revision_f16: string; revision_f32: string; vram_mb_f16: number; vram_mb_f32: number;
@@ -173,10 +174,14 @@ async function loadModels() {
   const pythonRow = progressRow("Python core");
   setStatus(`Loading ${choice.id}…`);
 
-  const python = new WorkerRpc(new Worker(new URL("./workers/pyodide.worker.ts", import.meta.url), { type: "module" }));
-  const models = new WorkerRpc(new Worker(new URL("./workers/models.worker.ts", import.meta.url), { type: "module" }));
+  // Every worker this attempt starts, so a failed attempt frees its GPU memory before the visitor tries again
+  const workers: Worker[] = [];
+  const spawn = (url: URL) => { const worker = new Worker(url, { type: "module" }); workers.push(worker); return worker; };
+  let failed = false;
+  const python = new WorkerRpc(spawn(new URL("./pipeline/pyodide.worker.ts", import.meta.url)));
+  const models = new WorkerRpc(spawn(new URL("./models/models.worker.ts", import.meta.url)));
 
-  // WebLLM is imported only now, so the page itself stays small before Load (AC-1)
+  // WebLLM is imported only now, so the page itself stays small before Load
   const { CreateWebWorkerMLCEngine, prebuiltAppConfig } = await import("@mlc-ai/web-llm");
   // WebLLM's own records for the builds (their GPU code and settings), downloading the weights from pinned commits
   const judgeRecord = config.models.answer_models[config.judge_model];
@@ -187,7 +192,7 @@ async function loadModels() {
   const appConfig = { ...prebuiltAppConfig, model_list: [pinned(choice.id, choice.revision)]
     .concat(judge.id === choice.id ? [] : [pinned(judge.id, judge.revision)]) };
   const answer = CreateWebWorkerMLCEngine(
-    new Worker(new URL("./workers/llm.worker.ts", import.meta.url), { type: "module" }), choice.id,
+    spawn(new URL("./models/llm.worker.ts", import.meta.url)), choice.id,
     { appConfig, initProgressCallback: (p) => answerRow.update(p.progress, p.text) },
   ).then(engine => { answerRow.update(1, "ready"); return engine; },
          error => { answerRow.fail(String(error)); throw error; });
@@ -198,16 +203,23 @@ async function loadModels() {
 
   // The grounding judge (Llama 3.2 1B, the server's default checker) runs in its own engine, so it can check a
   // sentence while the answer model's stream waits; it loads after the answer model and may fail without failing
-  // Load: answers are then shown unchecked, with the reason (AC-5)
+  // Load: answers are then shown unchecked, with the reason
   let judgeEngine: MLCEngineInterface | null = null;
   let checkProblem: string | null = "the grounding judge is still loading";
   const setJudge = (engine: MLCEngineInterface | null, problem: string | null) => {
     judgeEngine = engine; checkProblem = problem;
     if (state.driver) { state.driver.judge = engine; state.driver.checkProblem = problem; }
   };
-  answer.then(() => CreateWebWorkerMLCEngine(
-    new Worker(new URL("./workers/llm.worker.ts", import.meta.url), { type: "module" }), judge.id,
-    { appConfig, initProgressCallback: (p) => groundingRow.update(p.progress, p.text) }))
+  const judgeWorker = () => {
+    const worker = spawn(new URL("./models/llm.worker.ts", import.meta.url));
+    worker.postMessage({ prefixCache: JUDGE_PREFIX_MARKER });
+    return worker;
+  };
+  answer.then(() => {
+    if (failed) throw new Error("Load failed");
+    return CreateWebWorkerMLCEngine(judgeWorker(), judge.id,
+      { appConfig, initProgressCallback: (p) => groundingRow.update(p.progress, p.text) });
+  })
     .then(engine => { groundingRow.update(1, `ready, ${judge.id.replace(/-Instruct.*/, "")}`); setJudge(engine as MLCEngineInterface, null); },
           error => { groundingRow.fail(String(error)); setJudge(null, `the grounding judge did not load (${String(error).slice(0, 120)})`); });
 
@@ -218,7 +230,7 @@ async function loadModels() {
     .then(count => pythonRow.update(1, `ready, ${count} sample chunks`), error => { pythonRow.fail(String(error)); throw error; });
 
   // Uploads index as soon as the embedder and the Python index are up, without waiting for the answer model
-  Promise.all([search, core]).then(() => attachModels(models, python)).catch(() => undefined);
+  Promise.all([search, core]).then(() => { if (!failed) return attachModels(models, python); }).catch(() => undefined);
 
   try {
     const [engine] = await Promise.all([answer, search, core]);
@@ -236,6 +248,9 @@ async function loadModels() {
     $<HTMLTextAreaElement>("question").focus();
     void renderObservability();
   } catch (error) {
+    failed = true;
+    detachModels();
+    for (const worker of workers) worker.terminate();
     // WebGPU reports running out of GPU memory as an allocation error or as a lost device
     const outOfMemory = /memory|OOM|allocation|device (was )?lost/i.test(String(error));
     load.disabled = select.disabled = false;
@@ -417,7 +432,7 @@ async function ask(query: string, voice: VoiceTurn | null = null) {
   }
 }
 
-// --- the mic (spec 0009, AC-6) ---
+// --- the mic ---
 
 const recorder = new Recorder();
 const NOTHING_HEARD = "I did not hear a question. Press Speak, ask your question, then press it again.";
@@ -433,10 +448,14 @@ function resetMic() {
   mic.classList.remove("recording");
 }
 
+let micStarting = false;
+
 async function toggleMic() {
+  if (micStarting) return;                       // a second press while the browser asks for the microphone
   if (recorder.recording) return finishRecording();
   if (state.busy || !state.models) return;
   const mic = $<HTMLButtonElement>("mic");
+  micStarting = true;
   try {
     await recorder.start((seconds) => { mic.textContent = `Stop recording (${Math.floor(seconds)} s)`; }, () => void finishRecording());
   } catch (error) {
@@ -444,6 +463,8 @@ async function toggleMic() {
       ? "The microphone is blocked for this page. Allow it from the icon at the left of the address bar (site settings), then press Speak again."
       : `The microphone could not start: ${String((error as Error)?.message ?? error)}`);
     return;
+  } finally {
+    micStarting = false;
   }
   mic.textContent = "Stop recording (0 s)";
   mic.setAttribute("aria-pressed", "true");
@@ -482,7 +503,7 @@ async function finishRecording() {
   }
 }
 
-// --- the Observability tab (spec 0007's tab; numbers from the dashboard's own summarize, run in Pyodide) ---
+// --- the Observability tab (numbers from the dashboard's own summarize, run in Pyodide) ---
 
 const WINDOW_MS: Record<string, number | null> = { "1h": 3600e3, "24h": 86400e3, "7d": 7 * 86400e3, all: null };
 const STAGE_NAMES: Record<string, string> = {

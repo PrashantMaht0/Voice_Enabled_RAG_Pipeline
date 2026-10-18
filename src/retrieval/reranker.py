@@ -4,7 +4,7 @@ from typing import Dict, List
 
 from flashrank import Ranker, RerankRequest
 
-from src.pipeline.retrieval import rerank_text  # noqa: F401  (imported from here by older callers)
+from src.pipeline.retrieval import rerank_text
 from src.utils.config import pick
 
 

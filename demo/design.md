@@ -4,7 +4,7 @@ extracted_from: app.py (gr.themes.Soft() plus custom_css), the local V-RAG dashb
 tokens: demo/src/style.css (:root custom properties, light and dark)
 ---
 
-# Live demo design direction (spec 0009)
+# Live demo design direction
 
 The demo should feel like the same product as your local dashboard, moved into a browser tab.
 

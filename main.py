@@ -13,15 +13,15 @@ from src.utils.config import get
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Warms every model and checks the index before the server accepts requests, then starts the index worker
-    (spec 0008); on shutdown, stops a build in progress."""
+    """Warms every model and checks the index before the server accepts requests, then starts the index worker;
+    on shutdown, stops a build in progress."""
     warmup()
     start_index()
     yield
     stop_index()
 
 
-# /docs, /redoc and /openapi.json only when api.docs_enabled (turn off for a public deployment, spec 0008)
+# /docs, /redoc and /openapi.json only when api.docs_enabled (turn off for a public deployment)
 docs = bool(get("api.docs_enabled", True))
 app = FastAPI(title="Vocal RAG API", lifespan=lifespan, docs_url="/docs" if docs else None,
               redoc_url="/redoc" if docs else None, openapi_url="/openapi.json" if docs else None)

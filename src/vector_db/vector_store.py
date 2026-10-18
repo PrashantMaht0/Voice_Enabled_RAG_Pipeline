@@ -15,15 +15,16 @@ from src.utils.config import pick
 # Bump when the chunk layout changes, so an older index is rebuilt at startup.
 # 2: PDFs are chunked page by page and their headers cite "Page: N".
 # 3: chunk ids come from a SHA256 content fingerprint, so they are the same on every run.
-# 4: table chunks (spec 0004), `kind` in metadata, and the table fingerprint in the marker.
-# 5: figure chunks (spec 0005); the marker's fingerprint covers tables and figures.
-INDEX_FORMAT_VERSION = 5
+# 4: table chunks, `kind` in metadata, and the table fingerprint in the marker.
+# 5: figure chunks; the marker's fingerprint covers tables and figures.
+# 6: the fingerprint covers the file name too, so two files with the same text no longer share chunk ids.
+INDEX_FORMAT_VERSION = 6
 INDEX_MARKER = "index_version.json"
 UPSERT_BATCH = 256
 
 
 class Generation(NamedTuple):
-    """One complete copy of the index (spec 0008): generation 0 uses the base names, N >= 1 adds `__gN`."""
+    """One complete copy of the index: generation 0 uses the base names, N >= 1 adds `__gN`."""
     number: int
     collection_name: str
     tantivy_path: str
@@ -61,7 +62,7 @@ class VectorDBManager:
         self._lock = threading.Lock()
         marker = self.read_marker()
         # Remembered for cleanup_orphans: a startup rebuild writes a fresh marker, which must not count as proof
-        # that the generations already on disk are orphans (spec 0008, AC-7)
+        # that the generations already on disk are orphans
         self.opened_with_marker = marker is not None
         number = int(marker.get("generation", 0)) if marker else 0
         self._active = self._open_generation(number)
@@ -76,7 +77,7 @@ class VectorDBManager:
 
     @property
     def active(self) -> Generation:
-        """The generation questions read from; one snapshot per question (spec 0008, AC-7)."""
+        """The generation questions read from; one snapshot per question."""
         with self._lock:
             return self._active
 
@@ -115,7 +116,7 @@ class VectorDBManager:
         except ValueError:
             if number != 0:
                 raise                                  # never wipe a generation folder
-            # Generation 0 may hold an index with an older schema: recreate it (as before spec 0008)
+            # Generation 0 may hold an index with an older schema: recreate it (from before index generations)
             shutil.rmtree(path)
             os.makedirs(path, exist_ok=True)
             index = tantivy.Index(tantivy_schema(), path=path)
@@ -262,13 +263,6 @@ class VectorDBManager:
         with open(temporary, "w", encoding="utf-8") as f:
             json.dump(marker, f)
         os.replace(temporary, self.marker_path)
-
-    def clear_index_format(self):
-        """Dropped before any rebuild, so a crash partway never looks like a healthy index."""
-        try:
-            os.remove(self.marker_path)
-        except FileNotFoundError:
-            pass
 
     def reset_indexes(self):
         """Empties both stores of the active generation in place (tests and tools; the API builds generations)."""

@@ -5,7 +5,6 @@ in this process, so audio never travels to the API. Start it with `python app.py
 import json
 import os
 import queue
-import re
 import threading
 import time
 from urllib.parse import quote
@@ -22,7 +21,7 @@ from src.voice.stt import WhisperSTT
 from src.voice.tts import KokoroTTS
 
 API_BASE = os.environ.get("VRAG_API_BASE", "http://localhost:8000/api")
-MAX_QUESTION_CHARS = 1000      # the API refuses longer questions (spec 0008, AC-4)
+MAX_QUESTION_CHARS = 1000      # the API refuses longer questions
 MAX_TURN_CHARS = 2000          # and longer history turns
 TRUST_FORWARDED = os.environ.get("VRAG_UI_TRUST_FORWARDED", "").lower() in ("1", "true", "yes")
 
@@ -32,7 +31,7 @@ class ApiError(Exception):
 
 
 def client_headers(request) -> dict:
-    """X-VRAG-Client: the browser's address, so the API's rate limits count each user (spec 0008, AC-15). Behind a
+    """X-VRAG-Client: the browser's address, so the API's rate limits count each user. Behind a
     trusted proxy (VRAG_UI_TRUST_FORWARDED) it is the first X-Forwarded-For hop."""
     if request is None:
         return {}
@@ -65,19 +64,19 @@ def api_message(response, name=None) -> str:
     return detail or f"API error {code}."
 
 custom_css = """
-/* The spoken answer player says so while it is empty (spec 0006, polish child) */
+/* The spoken answer player says so while it is empty */
 #voice-reply .empty::after { content: "No spoken answer yet."; margin-left: 8px; }
 #trace_box textarea { background-color: #0d1117; color: #58a6ff; font-family: monospace; font-size: 12px; }
 .metric-box { text-align: center; padding: 15px; background: #1e293b; border-radius: 8px; border: 1px solid #334155; }
 .metric-value { font-size: 1.5rem; font-weight: bold; color: #38bdf8; }
 .metric-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
 .table-scroll { overflow-x: auto; }
-/* Observability tab (spec 0007): two rows of five cards, the trace panel beside the recent table */
+/* Observability tab: two rows of five cards, the trace panel beside the recent table */
 .metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .metric-note { font-size: 0.7rem; color: #94a3b8; margin-top: 4px; overflow-wrap: anywhere; }
 .obs-warning { background: #451a03; color: #fde68a; border: 1px solid #b45309; border-radius: 8px; padding: 8px 12px; }
 .trace-panel { min-height: 240px; max-height: 560px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; padding: 4px 12px; }
-/* Phone width: columns stack, buttons stay reachable, tables scroll inside themselves (spec 0006). Gradio puts
+/* Phone width: columns stack, buttons stay reachable, tables scroll inside themselves. Gradio puts
    its own container selector in front of every rule here, so selectors start below the container. */
 @media (max-width: 767px) {
   html, body, .gradio-container { overflow-x: hidden; max-width: 100vw; }
@@ -136,7 +135,7 @@ def report_voice_timings(trace_id, **timings):
 
 def voice_query(audio, history, request: gr.Request = None):
     """Transcribes a recording, streams the answer into the chat, and speaks each approved sentence as soon
-    as it arrives (spec 0006). Yields the Ask tab's outputs plus one audio chunk per spoken sentence."""
+    as it arrives. Yields the Ask tab's outputs plus one audio chunk per spoken sentence."""
     history = history or []
     if audio is None:
         yield (history, history, "", "", "_No audio captured._", *blank_metrics(), gr.skip(), gr.skip())
@@ -155,7 +154,7 @@ def voice_query(audio, history, request: gr.Request = None):
     stt_ms = (time.perf_counter() - started) * 1000
 
     if heard_nothing(question, no_speech):
-        # Silence or filler never reaches the API (spec 0006, AC-5)
+        # Silence or filler never reaches the API
         print(f"[VOICE] nothing heard: {question!r} {no_speech}")
         yield (history, history, "", "", NOTHING_HEARD, *blank_metrics(), gr.skip(), gr.skip())
         return
@@ -339,7 +338,7 @@ def refresh_corpus():
 
 
 def fetch_index_status():
-    """The API's index worker status (spec 0008), or None when it cannot be read."""
+    """The API's index worker status, or None when it cannot be read."""
     try:
         status = requests.get(f"{API_BASE}/index", timeout=10).json()
     except Exception:
@@ -476,7 +475,7 @@ def error_outputs(history, turn, message):
 
 
 def run_query(question, history, request: gr.Request = None, channel="typed"):
-    """Text turn: stream approved sentences into the chat as they arrive (spec 0006)."""
+    """Text turn: stream approved sentences into the chat as they arrive."""
     history = history or []
 
     if not question.strip():
@@ -557,7 +556,7 @@ def failed_writes_line(failed):
 
 
 def observability_cards(m):
-    """The ten cards in the wireframe's order (spec 0007, AC-2)."""
+    """The ten cards in display order."""
     c, r = m["counts"], m["rates"]
     ret, grd, lat, tok = m["retrieval"], m["grounding"], m["latency"], m["tokens"]
     refused = c["refused_gate"] + c["refused_grounding"] + c["refused_model"] + c["refused_empty"]
@@ -587,11 +586,15 @@ def observability_cards(m):
 
 def fetch_observability(window_label):
     """Warning line, cards, recent questions (with their ids), the trace panel's default and the stage table for
-    the chosen window (spec 0007)."""
+    the chosen window."""
     window = WINDOWS[window_label]
     try:
-        m = requests.get(f"{API_BASE}/metrics", params={"window": window}, timeout=30).json()
-        recent = requests.get(f"{API_BASE}/traces", params={"limit": 50, "window": window}, timeout=30).json()
+        metrics_reply = requests.get(f"{API_BASE}/metrics", params={"window": window}, timeout=30)
+        recent_reply = requests.get(f"{API_BASE}/traces", params={"limit": 50, "window": window}, timeout=30)
+        failed = next((r for r in (metrics_reply, recent_reply) if r.status_code != 200), None)
+        if failed is not None:
+            return gr.update(value="", visible=False), f"API error: {api_message(failed)}", [], [], NO_TRACE, []
+        m, recent = metrics_reply.json(), recent_reply.json()
     except Exception as e:
         return gr.update(value="", visible=False), f"API error: {e}", [], [], NO_TRACE, []
     fmt = lambda v: "—" if v is None else f"{v:.0f}"
@@ -602,6 +605,11 @@ def fetch_observability(window_label):
     picks = [[row, t["id"]] for row, t in zip(rows, recent)]
     warning = failed_writes_line(m.get("failed_writes"))
     return gr.update(value=warning, visible=bool(warning)), observability_cards(m), rows, picks, NO_TRACE, stages
+
+
+def table_cell(text) -> str:
+    """Text safe inside one Markdown table cell: a pipe would start a new column, a newline a new row."""
+    return (text or "").replace("|", "\\|").replace("\n", " ")
 
 
 def token_line(prompt, output):
@@ -626,7 +634,10 @@ def open_trace(picks, event: gr.SelectData):
     if trace_id is None:
         return NO_TRACE
     try:
-        t = requests.get(f"{API_BASE}/traces/{trace_id}", timeout=30).json()
+        reply = requests.get(f"{API_BASE}/traces/{trace_id}", timeout=30)
+        if reply.status_code != 200:
+            return f"API error: {api_message(reply)}"
+        t = reply.json()
     except Exception as e:
         return f"API error: {e}"
     lines = [f"### {t['question']}", f"{t['created_at'][:19].replace('T', ' ')} · {t['channel']} · path **{t['path']}** · "
@@ -643,7 +654,7 @@ def open_trace(picks, event: gr.SelectData):
                 pair = "—" if s.get("prompt_tokens") is None else token_line(s["prompt_tokens"], s["output_tokens"] or 0)
                 lines.append(f"- {STAGE_NAMES[s['layer']]}: {pair}")
     lines += ["", "**Stages**", "", "| Stage | ms | Details |", "|---|---:|---|"]
-    lines += [f"| {s['layer']} | {s['elapsed_ms']:.0f} | {s['details'] or ''} |" for s in t.get("spans", [])]
+    lines += [f"| {s['layer']} | {s['elapsed_ms']:.0f} | {table_cell(s['details'])} |" for s in t.get("spans", [])]
     if t.get("retrieved"):
         lines += ["", "**Retrieved sources**", ""]
         lines += [f"- {d['source']} · p.{d['page']} · {KIND_TITLES.get(d['kind'], d['kind'])} · score {d['score']}"
@@ -816,6 +827,6 @@ if __name__ == "__main__":
     host = os.environ.get("VRAG_UI_HOST", "127.0.0.1")
     print("\nOpen http://localhost:7860 — microphone access is blocked on other hostnames.\n")
     # Gradio refuses files over the API's upload limit before sending them, and runs at most 4 events of a kind at
-    # once, matching the API's answer slots (spec 0008)
+    # once, matching the API's answer slots
     demo.queue(default_concurrency_limit=4)
     demo.launch(server_name=host, server_port=7860, max_file_size="25mb")

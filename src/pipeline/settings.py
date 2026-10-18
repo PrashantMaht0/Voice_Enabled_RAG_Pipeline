@@ -1,4 +1,4 @@
-"""Every setting the answer rules read, in one object (spec 0009): the server builds it from config.yaml, the
+"""Every setting the answer rules read, in one object: the server builds it from config.yaml, the
 browser from config.json. The defaults are the ones the server used before the core existed."""
 from dataclasses import asdict, dataclass, fields
 from typing import Optional

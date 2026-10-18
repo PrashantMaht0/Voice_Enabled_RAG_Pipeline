@@ -9,7 +9,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const files = readFileSync(join(root, "src/pipeline/browser_files.txt"), "utf8")
   .split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
 const tests = ["tests/pipeline/core_test.py", "tests/pipeline/demo_index_test.py"];
-files.push("demo/py/bridge.py", ...tests);
+files.push("demo/python/bridge.py", ...tests);
 
 const pyodide = await loadPyodide();
 await pyodide.loadPackage(["numpy", "pyyaml", "pytest"]);

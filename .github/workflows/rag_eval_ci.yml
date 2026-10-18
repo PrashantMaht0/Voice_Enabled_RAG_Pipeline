@@ -30,7 +30,7 @@ jobs:
 
   pyodide_core:
     name: Answer core in Pyodide
-    # The browser demo runs src/pipeline in Pyodide (spec 0009); the same core tests must pass there too.
+    # The browser demo runs src/pipeline in Pyodide; the same core tests must pass there too.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +43,11 @@ jobs:
         run: |
           npm --prefix demo/pyodide-runner ci
           npm --prefix demo/pyodide-runner test
+
+      - name: Run the browser driver tests
+        run: |
+          npm --prefix demo ci
+          npm --prefix demo test
 
   ragas_gate:
     name: Ragas quality gate (self-hosted / manual)
@@ -83,4 +88,4 @@ jobs:
             pytest==9.1.1 requests==2.34.2
 
       - name: Ragas thresholds (faithfulness 0.85 / relevancy 0.85)
-        run: pytest tests/eval_test.py -m ragas_ci -q -s
+        run: pytest tests/eval/eval_test.py -m ragas_ci -q -s

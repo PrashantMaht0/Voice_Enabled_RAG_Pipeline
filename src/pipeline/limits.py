@@ -1,4 +1,4 @@
-"""Question size limits (spec 0008, AC-4): one request cannot send a huge prompt to the models."""
+"""Question size limits: one request cannot send a huge prompt to the models."""
 from typing import Dict, List
 
 

@@ -2,11 +2,12 @@
   "name": "vrag-live-demo",
   "private": true,
   "type": "module",
-  "description": "The V-RAG live demo (spec 0009): the question pipeline in the browser, published on GitHub Pages.",
+  "description": "The V-RAG live demo: the question pipeline in the browser, published on GitHub Pages.",
   "scripts": {
     "python": "node scripts/bundle_python.mjs",
     "dev": "npm run python && vite --port 5175 --strictPort",
     "build": "npm run python && tsc --noEmit && vite build",
+    "test": "node --experimental-transform-types --no-warnings --test tests/*.test.ts",
     "preview": "vite preview --port 5176 --strictPort"
   },
   "dependencies": {

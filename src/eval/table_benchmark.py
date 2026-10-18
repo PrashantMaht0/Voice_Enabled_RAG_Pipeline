@@ -1,4 +1,4 @@
-"""Table reader benchmark (spec 0004).
+"""Table reader benchmark.
 
     python -m src.eval.table_benchmark draft    # fill table boxes, draft candidate questions for review
     python -m src.eval.table_benchmark run [--readers none pdfplumber ...]
@@ -8,7 +8,7 @@ confirm it), and asks llama3.1:8b, from each table page's plain text, for questi
 sit only in the table. Candidates land with `reviewed: false`; only reviewed ones are ever scored.
 
 `run` starts the real API once per reader on a throwaway index built from the test PDFs, asks every
-reviewed question, scores right value and right page, and applies the winner rule (AC-6).
+reviewed question, scores right value and right page, and applies the winner rule.
 """
 import argparse
 import hashlib
@@ -287,7 +287,7 @@ def draft(data: dict) -> dict:
 # --- run ---
 
 def nearest_rank(values, q):
-    """Value at rank ceil(q * n) of the sorted list; None for an empty list (as in spec 0003)."""
+    """Value at rank ceil(q * n) of the sorted list; None for an empty list."""
     import math
     if not values:
         return None
@@ -323,7 +323,7 @@ def summarize(results: list) -> dict:
 def read_table_log(path: Path) -> tuple:
     """(table reader call lines, detection lines, figure lines) from a VRAG_TABLE_LOG file.
 
-    Figure lines (spec 0005) are figure calls (`reader` starts with "figure:"), per PDF candidate lines and
+    Figure lines are figure calls (`reader` starts with "figure:"), per PDF candidate lines and
     dense page skips."""
     calls, detections, figures = [], [], []
     if path.exists():
@@ -365,7 +365,7 @@ def detector_report(detections: list, data: dict) -> dict:
 
 
 def pick_winner(readers: dict) -> dict:
-    """AC-6: most right value and page; near ties go to the lowest p50; `none` must be beaten by 3."""
+    """Most right value and page; near ties go to the lowest p50; `none` must be beaten by 3."""
     scored = {name: r for name, r in readers.items() if r.get("status") == "ran"}
     baseline = scored.get("none")
     contenders = {n: r for n, r in scored.items() if n != "none"}
@@ -408,7 +408,7 @@ def reader_config(data: dict, reader: str, workdir: Path) -> Path:
     config["ingestion"]["table_parser"] = reader
     config["ingestion"]["table_cache"] = False
     config["ingestion"]["figure_parser"] = "none"     # tables only, whatever the figure default becomes
-    config.setdefault("grounding", {})["checker"] = "none"     # measurements run unchecked (spec 0006)
+    config.setdefault("grounding", {})["checker"] = "none"     # measurements run unchecked
     path = workdir / "config.yaml"
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config, f)
@@ -437,7 +437,7 @@ def serve_and_ask(config_path: Path, workdir: Path, expect: dict, questions: lis
                   health_timeout: float = HEALTH_TIMEOUT_S) -> dict:
     """Starts the API on `config_path`, checks /api/health against `expect`, asks every question, stops the API.
 
-    Shared by the table and figure benchmarks (spec 0005). The reader log lands in workdir/tables.jsonl."""
+    Shared by the table and figure benchmarks. The reader log lands in workdir/tables.jsonl."""
     log_path, table_log = workdir / "server.log", workdir / "tables.jsonl"
     port = free_port()
     env = dict(os.environ, VRAG_CONFIG=str(config_path), VRAG_TABLE_LOG=str(table_log))
@@ -541,7 +541,7 @@ def print_report(report: dict, path: Path):
 
 def main(argv=None) -> int:
     """Command line entry: `python -m src.eval.table_benchmark draft | run [--readers ...] [--apply]`."""
-    parser = argparse.ArgumentParser(description="Table reader benchmark (spec 0004)")
+    parser = argparse.ArgumentParser(description="Table reader benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("draft", help="fill table boxes and draft candidate questions for review")
     run_parser = sub.add_parser("run", help="benchmark every reader end to end through the real API")

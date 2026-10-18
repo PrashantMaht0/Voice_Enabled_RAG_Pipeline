@@ -1,4 +1,4 @@
-"""Upload checks (spec 0008, AC-5), shared by the API and the live demo's PDF reading Space (spec 0009): a file's
+"""Upload checks, shared by the API and the live demo's PDF reading Space: a file's
 name, and whether its contents are what the name says. Framework free: a refusal raises UploadRefused with a code,
 an HTTP status and a message, and each caller turns it into its own error."""
 import unicodedata
@@ -19,7 +19,7 @@ class UploadRefused(Exception):
 
 
 def upload_name_problem(name: str) -> str:
-    """Why an uploaded file name is refused, or '' when it is fine (spec 0008, AC-5)."""
+    """Why an uploaded file name is refused, or '' when it is fine."""
     if not name or not name.lower().endswith(DOCUMENT_TYPES):
         return "Upload a .pdf, .md or .txt file."
     if name.startswith(".") or name != name.strip():

@@ -18,7 +18,7 @@ __pycache__/
 .pytest_cache/
 
 # --- Models, indexes and the trace database (downloaded or built locally) ---
-models/
+/models/
 vectordb/
 
 # --- Data: everything stays local except the reviewed evaluation question sets ---
@@ -33,7 +33,7 @@ data/eval/*
 .DS_Store
 .claude/
 skills-lock.json
-# --- live demo (spec 0009) ---
+# --- live demo ---
 demo/**/node_modules/
 demo/spike/.out/
 demo/sample/.build/

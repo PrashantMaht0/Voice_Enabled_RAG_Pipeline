@@ -5,7 +5,7 @@ python-multipart==0.0.32        # FastAPI needs it to accept uploaded files
 gradio==5.50.0
 pydantic==2.12.3
 requests==2.34.2
-urllib3==2.8.0                    # pinned above requests' floor: 2.7.0 had three advisories (spec 0008 audit)
+urllib3==2.8.0                    # pinned above requests' floor: 2.7.0 had three advisories
 
 # --- LLM client ---
 ollama==0.6.2
@@ -20,7 +20,7 @@ FlashRank==0.2.10
 
 # --- Voice: speech to text and text to speech ---
 torch==2.13.0
-torchvision==0.28.0              # pulled in by timm (spec 0004); must match torch, see Dockerfile
+torchvision==0.28.0              # pulled in by timm; must match torch, see Dockerfile
 faster-whisper==1.2.1
 kokoro-onnx==0.5.0
 onnxruntime==1.29.0              # runs the Kokoro voice model
@@ -31,7 +31,7 @@ numpy==2.5.2
 pypdf==6.19.0
 tiktoken==0.14.0
 
-# --- Tables in PDFs (spec 0004) ---
+# --- Tables in PDFs ---
 # pdfplumber stays at 0.11.9: 0.11.10 needs Pillow 12.2+, and gradio 5.50 needs Pillow below 12.
 pdfplumber==0.11.9
 pypdfium2==5.14.0

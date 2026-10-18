@@ -1,11 +1,10 @@
-"""Speak an answer sentence by sentence (spec 0006).
+"""Speak an answer sentence by sentence.
 
 One worker thread synthesizes sentences in the order they arrive, so sentence N+1 is being synthesized
 while sentence N plays. The dashboard and the latency benchmark both use it, so they measure the same thing.
 """
 import io
 import queue
-import re
 import threading
 import time
 import wave
@@ -14,9 +13,11 @@ from typing import Iterator, List, Optional
 
 import numpy as np
 
-from src.utils.text_sanitizer import sanitize_for_speech, speech_pieces   # noqa: F401 (speech_pieces re-exported)
+from src.utils.text_sanitizer import sanitize_for_speech, speech_pieces
 
 _DONE = object()
+
+
 @dataclass
 class SpokenSentence:
     """One synthesized speech piece, in the order it is played."""
@@ -99,7 +100,7 @@ class SentenceSpeaker:
 
 
 def max_gap_ms(first_ready: float, sentences: List[SpokenSentence]) -> float:
-    """Largest max(0, ready_i - (first audio + durations of the sentences before i)) over i >= 2 (spec 0006);
+    """Largest max(0, ready_i - (first audio + durations of the sentences before i)) over i >= 2;
     0 for a one sentence answer."""
     gap, played = 0.0, 0.0
     for i, s in enumerate(sentences):

@@ -1,4 +1,4 @@
-"""Figure reader test set and benchmark (spec 0005).
+"""Figure reader test set and benchmark.
 
     python -m src.eval.figure_benchmark draft    # list figure boxes, save crops, draft candidate questions
     python -m src.eval.figure_benchmark run      # every figure reader end to end through the real API
@@ -232,7 +232,7 @@ def figure_calls_by_figure(lines: list) -> dict:
 
 
 def figure_timings(lines: list) -> dict:
-    """Seconds per figure and outcome counts (spec 0005, figure reading value sourcing)."""
+    """Seconds per figure and outcome counts."""
     classify, extract = [], []
     counts = {"retries": 0, "failed": 0, "timeouts": 0, "errors": 0, "missed_tables": 0, "classified_figures": 0}
     for calls in figure_calls_by_figure(lines).values():
@@ -288,7 +288,7 @@ def figure_config(data: dict, reader: str, workdir: Path) -> Path:
     config["cache"]["enabled"] = False
     config["ingestion"]["figure_parser"] = reader
     config["ingestion"]["table_cache"] = False
-    config.setdefault("grounding", {})["checker"] = "none"     # measurements run unchecked (spec 0006)
+    config.setdefault("grounding", {})["checker"] = "none"     # measurements run unchecked
     path = workdir / "config.yaml"
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config, f)
@@ -356,7 +356,7 @@ def print_report(report: dict, path: Path):
 
 def main(argv=None) -> int:
     """Command line entry: `python -m src.eval.figure_benchmark draft | run [--readers ...] [--apply]`."""
-    parser = argparse.ArgumentParser(description="Figure reader benchmark (spec 0005)")
+    parser = argparse.ArgumentParser(description="Figure reader benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("draft", help="list figure boxes, save crops and draft candidate questions for review")
     run_parser = sub.add_parser("run", help="benchmark every figure reader end to end through the real API")

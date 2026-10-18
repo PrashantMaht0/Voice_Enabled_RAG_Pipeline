@@ -33,7 +33,7 @@ def grounding_off(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def figures_off(monkeypatch):
-    """Figure reading (spec 0005) follows config.yaml; tests turn it on themselves, so it is off by default here."""
+    """Figure reading follows config.yaml; tests turn it on themselves, so it is off by default here."""
     from src.ingestion import figures
     monkeypatch.setattr(figures, "configured_parser", lambda: "none")
     monkeypatch.setattr(figures, "_effective_parser", "none")

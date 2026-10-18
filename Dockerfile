@@ -1,4 +1,4 @@
-# Two stages (spec 0008): the compilers live only in the builder; the final image runs as a non root user.
+# Two stages: the compilers live only in the builder; the final image runs as a non root user.
 
 FROM python:3.12-slim AS builder
 
@@ -11,7 +11,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 # CPU only PyTorch first (same versions as requirements.txt): the CUDA build adds GBs no container uses,
 # since Ollama does the GPU work and the embedding and speech models run fine on CPU. torchvision must come
-# from the same CPU index: the PyPI build is compiled for CUDA torch and breaks `import timm` (spec 0004).
+# from the same CPU index: the PyPI build is compiled for CUDA torch and breaks `import timm`.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
         "$(grep '^torch==' requirements.txt)" "$(grep '^torchvision==' requirements.txt | cut -d' ' -f1)" \
     && pip install --no-cache-dir -r requirements.txt
@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 
 FROM python:3.12-slim
 
-# tesseract-ocr: the layoutlmv3 table reader OCRs flagged pages that have no text layer (spec 0004)
-# ffmpeg: Gradio converts each streamed spoken sentence to AAC for the browser (spec 0006)
+# tesseract-ocr: the layoutlmv3 table reader OCRs flagged pages that have no text layer
+# ffmpeg: Gradio converts each streamed spoken sentence to AAC for the browser
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 

@@ -23,7 +23,7 @@ voice:
 ingestion:
   chunk_size: 512
   chunk_overlap: 64
-  # Tables in PDFs (spec 0004). "none" skips detection entirely, so ingestion is as fast as before.
+  # Tables in PDFs. "none" skips detection entirely, so ingestion is as fast as before.
   table_parser: "layoutlmv3"       # benchmark winner 2026-10-08 (22 of 29 vs 9 for none); none | pdfplumber | qwen2.5vl:3b | qwen2.5vl:7b | layoutlmv3
   table_detector_model: "microsoft/table-transformer-detection"
   table_detector_revision: "2357cbe2b5a5d1c03e54f32764f06058933b65ab"
@@ -32,7 +32,7 @@ ingestion:
   table_model_revision: "5511c0fbae3ea1ebd5766c6879a7dd96ea8e6e12"
   table_timeout_s: 120             # per page, VLM readers only
   table_cache: true                # cache detection results, table reads and figure reads beside the index
-  # Charts and diagrams in PDFs (spec 0005). "none" skips every figure step, so ingestion is as fast as before.
+  # Charts and diagrams in PDFs. "none" skips every figure step, so ingestion is as fast as before.
   figure_parser: "qwen2.5vl:7b"    # sweep winner 2026-10-09 (11 of 31 figure answers vs 4 for none); none | qwen2.5vl:3b | qwen2.5vl:7b
   figure_min_area: 0.08            # share of the page a candidate must cover
   figure_aspect_min: 0.3           # width over height limits for a candidate
@@ -60,10 +60,10 @@ llm:
   rewriter_model: "llama3.2:1b"    # de-contextualises follow-up questions
   temperature: 0.0
   max_tokens: 256
-  top_p: 0.1                       # nucleus sampling for answers (spec 0009 moved it here from the code)
-  context_window: 4096             # the browser demo's answer model context (spec 0009); Ollama uses its own
-  answer_style: "full"             # full | short_first (a 4 to 10 word first sentence, spec 0006); set by answer_style --apply
-  timeout_s: 120                   # longest wait for each Ollama reply or stream chunk (spec 0008)
+  top_p: 0.1                       # nucleus sampling for answers
+  context_window: 4096             # the browser demo's answer model context; Ollama uses its own
+  answer_style: "full"             # full | short_first (a 4 to 10 word first sentence); set by answer_style --apply
+  timeout_s: 120                   # longest wait for each Ollama reply or stream chunk
 
 # --- Cache ---
 # Two-level query cache keyed on the resolved (rewritten, English-normalised) query.
@@ -74,7 +74,7 @@ cache:
   max_entries: 256
   similarity_threshold: 0.95       # cosine; bge embeddings are L2-normalised
 
-# --- Grounding check (spec 0006) ---
+# --- Grounding check ---
 # Each answer sentence is checked against the retrieved passages before it is shown or spoken; unsupported
 # sentences are dropped, and if none survive the answer is refused. "none" keeps every sentence unchecked.
 # The grounding benchmark (python -m src.eval.grounding_benchmark run --apply) picks the checker.
@@ -85,13 +85,13 @@ grounding:
   judge_model: "llama3.2:1b"
   threshold: 0.5                   # NLI only: entailment probability a sentence needs
 
-# --- Observability (spec 0006) ---
+# --- Observability ---
 # One SQLite file beside the index records every question; the Observability tab reads it.
 observability:
   db_path: null                    # default: vectordb/traces.sqlite3, beside the Qdrant storage
   max_traces: 10000                # older traces are deleted
 
-# --- Hardening (spec 0008) ---
+# --- Hardening ---
 # No login: these limits plus network binding protect the API. Add your public host to allowed_hosts and
 # turn docs off before deploying.
 api:
@@ -118,8 +118,8 @@ health:
   cache_s: 10
 
 
-# --- Live demo (spec 0009) ---
-# What the browser loads, pinned in build task 1 (2026-10-16). demo/scripts/build_demo_index.py exports these, plus the
+# --- Live demo ---
+# What the browser loads, pinned to Hub revisions. demo/scripts/build_demo_index.py exports these, plus the
 # retrieval, llm, grounding and api settings above, into demo/public/config.json.
 demo:
   confidence_threshold: 0.84       # the browser's fp32 cross encoder gate; matches flashrank at 0.65 on all 67 golden questions
@@ -127,7 +127,6 @@ demo:
   judge_model: "1b"                # the answer_models entry the judge runs (its own engine, pinned revision)
   embedder: {id: "Xenova/bge-small-en-v1.5", revision: "ea104dacec62", dtype: "fp32"}
   reranker: {id: "Xenova/ms-marco-MiniLM-L-12-v2", revision: "42a4a787e304", dtype: "fp32", max_tokens: 512}
-  nli: {id: "Xenova/nli-deberta-v3-small", revision: "6bc2a55c7c0f", dtype_f16: "fp16", dtype: "fp32"}
   whisper: {id: "onnx-community/whisper-base.en", revision: "51eefc0af78b", dtype_f16: "fp16", dtype: "fp32", decoder_dtype: "fp32"}   # the fp16 merged decoder is rejected by onnxruntime
   kokoro: {id: "onnx-community/Kokoro-82M-v1.0-ONNX", revision: "1939ad2a8e41", dtype: "fp32", voice: "af_bella"}   # fp16 on WebGPU speaks garbled audio (2026-10-16)
   answer_models:                   # WebLLM ids; f16 needs the shader-f16 GPU feature; download_mb from each ndarray-cache.json
@@ -135,4 +134,4 @@ demo:
     3b: {f16: "Llama-3.2-3B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-3B-Instruct-q4f32_1-MLC", revision_f16: "1e80abf71e3d", revision_f32: "6083cfdaaf08", vram_mb_f16: 2264, vram_mb_f32: 2952, download_mb: 1807}
     1b: {f16: "Llama-3.2-1B-Instruct-q4f16_1-MLC", f32: "Llama-3.2-1B-Instruct-q4f32_1-MLC", revision_f16: "2a37b0a5ecb6", revision_f32: "a949835e0f9a", vram_mb_f16: 879, vram_mb_f32: 1129, download_mb: 695}
   space: "Prashant-Mahto/vrag-pdf-reader"   # the PDF reading Space (space/app.py) the page sends uploads to
-  uploads: {per_day: 3, max_mb: 10, max_pages: 5, max_chunks: 2000, types: [".pdf", ".md", ".txt"]}   # AC-7; the Space enforces its own copies
+  uploads: {per_day: 3, max_mb: 10, max_pages: 5, max_chunks: 2000, types: [".pdf", ".md", ".txt"]}   # the Space enforces its own copies

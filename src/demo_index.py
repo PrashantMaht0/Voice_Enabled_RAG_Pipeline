@@ -1,4 +1,4 @@
-"""The browser demo's in memory index (spec 0009): dense search by cosine over unit vectors (numpy) and keyword
+"""The browser demo's in memory index: dense search by cosine over unit vectors (numpy) and keyword
 search by BM25, over the sample documents plus the visitor's uploads, in Pyodide.
 
 Keyword search follows tantivy's defaults (the server's keyword engine): split on anything that is not a letter or

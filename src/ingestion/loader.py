@@ -10,7 +10,7 @@ from src.ingestion.tables import TableExtractor
 from src.ingestion.figures import FigureExtractor
 from src.utils.config import pick
 
-# A page with fewer non whitespace characters than this has no text layer (spec 0004).
+# A page with fewer non whitespace characters than this has no text layer.
 MIN_TEXT_LAYER_CHARS = 20
 
 class DocumentLoader:
@@ -115,8 +115,9 @@ class DocumentLoader:
                     "content": clean_text,
                     "metadata": {
                         "source": filename,
-                        # Content fingerprint: the same text gives the same value on every run
-                        "doc_hash": hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
+                        # Fingerprint of the name and the text: the same file gives the same value on every run, and
+                        # a copy under another name gets its own chunk ids instead of overwriting the original's
+                        "doc_hash": hashlib.sha256(f"{filename}\0{clean_text}".encode("utf-8")).hexdigest()
                     }
                 }
                 if pages is not None:

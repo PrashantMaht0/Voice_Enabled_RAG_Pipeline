@@ -1,4 +1,4 @@
-"""The messages the answer and rewrite models receive, and how a rewrite reply is cleaned (spec 0009)."""
+"""The messages the answer and rewrite models receive, and how a rewrite reply is cleaned."""
 import re
 from typing import Dict, List
 

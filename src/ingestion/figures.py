@@ -1,4 +1,4 @@
-"""Figure finding and reading for PDF pages (spec 0005).
+"""Figure finding and reading for PDF pages.
 
 Candidates come from the PDF itself: embedded images and clusters of drawn shapes. Each
 candidate is cropped and shown to a vision model twice: once to name its kind in one word,
@@ -24,7 +24,7 @@ FIGURE_PROMPT_VERSION = 2
 FIGURE_BODY_VERSION = 2
 # A series of at least this many values that are all the same is a copy, not a reading: the vision model sometimes
 # repeats the latest value across a whole time series (Census Figure 6: "Female: $55,240" eight times for 1960 to
-# 2023). Shown to the answer model, such a line outweighs the true figures (spec 0009 parity investigation).
+# 2023). Shown to the answer model, such a line outweighs the true figures.
 COPIED_SERIES_MIN = 3
 FIGURE_PAD_PT = 18           # padding around each candidate, for axis labels and legends
 CLUSTER_GAP_PT = 12          # drawn objects this close join the same cluster
@@ -34,7 +34,7 @@ MAX_AXES = 4
 CAPTION_GAP_PT = 72
 CAPTION_PREFIXES = ("Figure", "Chart", "Fig.")
 TABLE_OVERLAP = 0.5          # a candidate more than half inside a table box is the table, not a figure
-# The 7B pretty prints its JSON: a full 4 by 8 reply measured 340 to 460 tokens (spec 0005 rationale).
+# The 7B pretty prints its JSON: a full 4 by 8 reply measured 340 to 460 tokens.
 CLASSIFY_PREDICT, EXTRACT_PREDICT, RETRY_PREDICT = 20, 600, 300
 
 CLASSIFY_PROMPT = ("Look at this image from a report. Answer chart if it plots data (axes, bars, lines, points or pie slices), "
@@ -47,7 +47,7 @@ EXTRACT_PROMPT = ("Read the figure in this image. Give its title, its axes, up t
 MARKER = "Figure description (generated)"
 UNAVAILABLE = "Figure description unavailable"
 
-# Call counters (AC-2, AC-3): one per page geometry pass, one per vision call (cache hits excluded).
+# Call counters: one per page geometry pass, one per vision call (cache hits excluded).
 geometry_calls = 0
 figure_classify_calls = 0
 figure_extract_calls = 0
@@ -70,7 +70,7 @@ def configured_parser() -> str:
 
 def configured_backend() -> str:
     """How the figure model is run (`ingestion.figure_backend`): `ollama` (local) or `transformers` (the live demo's
-    ZeroGPU Space, spec 0009, where `figure_parser` is a Hugging Face model id)."""
+    ZeroGPU Space, where `figure_parser` is a Hugging Face model id)."""
     return str(get("ingestion.figure_backend", "ollama"))
 
 
@@ -111,13 +111,18 @@ def check_figure_parser() -> str:
     return _effective_parser
 
 
+def parser_checked() -> bool:
+    """True once the figure reader in use is known, so callers can report it without triggering the check."""
+    return _effective_parser is not None
+
+
 def effective_parser() -> str:
     """The figure reader actually in use (checked once; `none` when the configured model is not pulled)."""
     return _effective_parser if _effective_parser is not None else check_figure_parser()
 
 
 def figure_fingerprint(parser: str = None) -> str:
-    """Appended to the table fingerprint in the index marker (AC-7); empty when figures are off."""
+    """Appended to the table fingerprint in the index marker; empty when figures are off."""
     parser = parser or effective_parser()
     if parser == "none":
         return ""
@@ -242,7 +247,7 @@ def _fits(b: Dict, page_area: float, s: Dict) -> bool:
 
 
 def has_drawings(pdfium_page) -> bool:
-    """True when the page holds any path or image object, nested forms included; one is enough (spec 0005 step 1)."""
+    """True when the page holds any path or image object, nested forms included; one is enough."""
     import pypdfium2 as pdfium
     kinds = [pdfium.raw.FPDF_PAGEOBJ_PATH, pdfium.raw.FPDF_PAGEOBJ_IMAGE]
     return next(iter(pdfium_page.get_objects(filter=kinds, max_depth=15)), None) is not None
@@ -415,14 +420,12 @@ def ask_transformers(model_id: str, prompt: str, png: bytes, schema: Dict, num_p
         out = model.generate(**inputs, max_new_tokens=num_predict, do_sample=False)
     reply = processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
     start, end = reply.find("{"), reply.rfind("}")
-    if os.environ.get("VRAG_DEBUG_FIGURES"):        # testing with public documents only: replies hold document text
-        print(f"[Figures] reply ({len(reply)} chars): {reply[:400]!r}")
     reply = reply[start:end + 1] if 0 <= start < end else reply   # the JSON object, without fences or commentary
     return fit_figure_reply(reply, schema) if "series" in schema.get("properties", {}) else reply
 
 
 def fit_figure_reply(reply: str, schema: Dict) -> str:
-    """Fits a transformers figure reply to the schema Ollama would have enforced (spec 0009): axis objects become
+    """Fits a transformers figure reply to the schema Ollama would have enforced: axis objects become
     their label, numbers become strings, lists are trimmed to the schema's caps (keeping the most recent values, as
     the prompt asks), and a missing summary falls back to the title. The validator stays as strict as before."""
     try:
@@ -471,7 +474,7 @@ def ask(model: str, prompt: str, png: bytes, schema: Dict, num_predict: int) -> 
 
 
 def unload(model: str):
-    """Frees the figure model's memory now instead of after Ollama's idle timeout (AC-6)."""
+    """Frees the figure model's memory now instead of after Ollama's idle timeout."""
     if configured_backend() != "ollama":
         return                                   # transformers keeps the model loaded for the next document
     try:
@@ -638,7 +641,7 @@ class FigureExtractor:
         import pypdfium2 as pdfium
         sha = tables.file_sha256(file_path)
         figures, called, reads = [], False, 0
-        # The live demo's Space reads at most this many figures per upload (spec 0009); unset means no limit
+        # The live demo's Space reads at most this many figures per upload; unset means no limit
         cap = get("ingestion.figure_max_per_document", None)
         pdf = pdfium.PdfDocument(file_path)
         try:

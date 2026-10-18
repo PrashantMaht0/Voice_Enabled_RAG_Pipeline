@@ -1,4 +1,4 @@
-"""The single index worker (spec 0008): uploads, deletes and startup checks only request a rebuild; this one
+"""The single index worker: uploads, deletes and startup checks only request a rebuild; this one
 thread runs them, never two at once, and requests that arrive during a build collapse into one follow up."""
 import threading
 import traceback

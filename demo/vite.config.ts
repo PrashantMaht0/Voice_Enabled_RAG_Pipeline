@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
-// GitHub Pages serves the site under the repository name; VITE_BASE overrides it (spec 0009).
+// GitHub Pages serves the site under the repository name; VITE_BASE overrides it.
 export default defineConfig({
   base: process.env.VITE_BASE ?? "/Voice_Enabled_RAG_Pipeline/",
   // kokoro-js brings its own transformers.js; the speech worker sets that copy's download path (revision pin)

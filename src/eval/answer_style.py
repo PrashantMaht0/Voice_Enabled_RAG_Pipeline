@@ -1,4 +1,4 @@
-"""Answer style runner (spec 0006, AC-21): should answers open with a short first sentence?
+"""Answer style runner: should answers open with a short first sentence?
 
     python -m src.eval.answer_style run [--apply] [--skip-ragas]
 
@@ -66,7 +66,7 @@ def shape(texts: list) -> dict:
 
 def gates(record: dict, base: dict) -> dict:
     """The context size gates plus this runner's own: first audio at least 500 ms sooner, gap p95 at most 300 ms,
-    relevancy within 0.05, no copied example (spec 0006, AC-21)."""
+    relevancy within 0.05, no copied example."""
     g = cs.gates(record, base)
     a, b = base["latency"].get("first_audio_p50_ms"), record["latency"].get("first_audio_p50_ms")
     gap = record["latency"].get("max_gap_p95_ms")
@@ -170,7 +170,7 @@ def print_report(result: dict, path: Path):
 
 def main(argv=None) -> int:
     """Command line entry: `python -m src.eval.answer_style run [--apply] [--skip-ragas]`."""
-    parser = argparse.ArgumentParser(description="Answer style runner (spec 0006)")
+    parser = argparse.ArgumentParser(description="Answer style runner")
     sub = parser.add_subparsers(dest="command", required=True)
     run_parser = sub.add_parser("run")
     run_parser.add_argument("--apply", action="store_true", help="write the decided llm.answer_style to config.yaml")

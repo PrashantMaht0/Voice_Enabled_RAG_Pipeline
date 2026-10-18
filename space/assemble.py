@@ -1,4 +1,4 @@
-"""Builds the folder uploaded to the Hugging Face Space (spec 0009, AC-14): the app, its requirements, the shared
+"""Builds the folder uploaded to the Hugging Face Space: the app, its requirements, the shared
 ingestion code it imports (src/ingestion, src/utils/config.py) and a config.yaml made of the repository's
 config/config.yaml with the Space's overrides. The repository stays the only source; the Space is never edited.
 

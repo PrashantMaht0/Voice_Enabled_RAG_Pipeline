@@ -1,4 +1,4 @@
-"""Grounding benchmark (spec 0006, AC-1 and AC-2): which sentence checker agrees best with Ragas?
+"""Grounding benchmark: which sentence checker agrees best with Ragas?
 
     python -m src.eval.grounding_benchmark run [--apply]
 
@@ -37,8 +37,8 @@ GOLDEN_PATH = REPO_ROOT / "data" / "eval" / "golden_dataset.json"
 
 # --- input ---
 
-RUN_KINDS = {"context": lambda r: f"K{r.get('chosen_top_k')}",       # spec 0006, AC-10
-             "style": lambda r: "S1" if r.get("chosen_style") == "short_first" else "S0",   # AC-21
+RUN_KINDS = {"context": lambda r: f"K{r.get('chosen_top_k')}",
+             "style": lambda r: "S1" if r.get("chosen_style") == "short_first" else "S0",
              "sweep": lambda r: r.get("winner")}
 
 
@@ -160,7 +160,7 @@ def evaluate(rows: list, checker, in_scope: int, timings: list) -> dict:
 
 
 def pick_winner(candidates: dict) -> dict:
-    """AC-2: qualify on false alarms and coverage; most low faithfulness touched; near ties to the fastest."""
+    """Qualify on false alarms and coverage; most low faithfulness touched; near ties to the fastest."""
     qualified = {name: c for name, c in candidates.items()
                  if c["false_alarms"] <= MAX_FALSE_ALARMS and c["answered_after"] >= MIN_ANSWERED * c["in_scope"]}
     if not qualified:
@@ -267,7 +267,7 @@ def summary_line(c: dict) -> str:
 
 def main(argv=None) -> int:
     """Command line entry: `python -m src.eval.grounding_benchmark run [--apply] [--run FILE]`."""
-    parser = argparse.ArgumentParser(description="Grounding benchmark (spec 0006)")
+    parser = argparse.ArgumentParser(description="Grounding benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
     run_parser = sub.add_parser("run")
     run_parser.add_argument("--apply", action="store_true")

@@ -1,4 +1,4 @@
-"""Metrics over stored traces (spec 0006, trace store child; spec 0007): counts, rates, percentiles, tokens and the
+"""Metrics over stored traces: counts, rates, percentiles, tokens and the
 latest quality."""
 import json
 import math
@@ -16,7 +16,7 @@ BENCHMARKS_DIR = REPO_ROOT / "data" / "benchmarks"
 
 
 def nearest_rank(values: List[float], q: float) -> Optional[float]:
-    """Value at rank ceil(q * n) of the sorted list (as spec 0003); None for no values."""
+    """Value at rank ceil(q * n) of the sorted list; None for no values."""
     if not values:
         return None
     ordered = sorted(values)
@@ -30,7 +30,7 @@ def percentiles(values: List[float]) -> Dict:
 
 
 def is_answered(path: str, answer: Optional[str]) -> bool:
-    """The one answered rule (spec 0007): the answered path, or a cache hit whose answer is not a refusal. The
+    """The one answered rule: the answered path, or a cache hit whose answer is not a refusal. The
     Answered card and the Answered column both use it."""
     return path == "answered" or (path == "cache" and not is_refusal(answer or ""))
 
@@ -86,7 +86,7 @@ def compute(store, window: str = "24h", benchmarks_dir: Path = BENCHMARKS_DIR) -
 
 def summarize(rows: List[Dict], spans: List[Dict]) -> Dict:
     """Counts, rates, stage, voice and latency percentiles and tokens over trace rows and their spans
-    (`{trace_id, layer, elapsed_ms}`). Pure, so the browser demo runs the same rules in Pyodide (spec 0009).
+    (`{trace_id, layer, elapsed_ms}`). Pure, so the browser demo runs the same rules in Pyodide.
 
     A cache hit counts as answered unless the cached answer was a refusal; errors and aborted requests are left out of
     the rates."""

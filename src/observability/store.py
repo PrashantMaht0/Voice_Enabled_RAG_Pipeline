@@ -1,4 +1,4 @@
-"""The trace store (spec 0006): one SQLite file beside the index, written only by the API.
+"""The trace store: one SQLite file beside the index, written only by the API.
 
 Tracing is extra: any failure here is one WARNING and a counter, never a changed answer.
 """
@@ -53,7 +53,7 @@ FINISH_FIELDS = ("search_query", "path", "cache_level", "confidence", "answer", 
                  "sentences_dropped", "dropped_sentences", "grounding_checker", "retrieved", "total_ms",
                  "first_sentence_ms", "config", "error", "prompt_tokens", "output_tokens")
 JSON_FIELDS = ("dropped_sentences", "retrieved", "config")
-# Columns added after the first schema (spec 0007): files made earlier gain them on startup.
+# Columns added after the first schema: files made earlier gain them on startup.
 ADDED_COLUMNS = {"traces": ("prompt_tokens INTEGER", "output_tokens INTEGER"),
                  "spans": ("prompt_tokens INTEGER", "output_tokens INTEGER")}
 
@@ -149,7 +149,7 @@ class TraceStore:
                           "VALUES (?, ?, ?, ?, ?, ?)",
                           [(trace_id, s["layer"], float(s.get("elapsed_ms") or 0.0), s.get("details"),
                             s.get("prompt_tokens"), s.get("output_tokens")) for s in spans])
-            # By id threshold, not a NOT IN scan (spec 0008, AC-18); ids only grow, so this keeps the newest
+            # By id threshold, not a NOT IN scan; ids only grow, so this keeps the newest
             c.execute("DELETE FROM traces WHERE id <= (SELECT MAX(id) FROM traces) - ?", (self.max_traces,))
             return trace_id
         return self._write("finish a trace", write)

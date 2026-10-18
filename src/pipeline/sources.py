@@ -63,7 +63,7 @@ def log_citations(citations: List[Dict]) -> None:
 
 
 def with_kinds(citations: List[Dict], details: List[Dict]) -> List[Dict]:
-    """Each citation gains the kinds (text, table, figure) of the retrieved chunks behind it (spec 0006)."""
+    """Each citation gains the kinds (text, table, figure) of the retrieved chunks behind it."""
     order = {"text": 0, "table": 1, "figure": 2}
     for c in citations:
         kinds = {d.get("kind") or "text" for d in details

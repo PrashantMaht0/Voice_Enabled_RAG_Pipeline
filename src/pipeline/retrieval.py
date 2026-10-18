@@ -28,7 +28,7 @@ def fuse(dense_results: List[Dict], sparse_results: List[Dict], alpha: float, to
 
 def present(candidates: List[Dict], docs: Optional[Iterable[str]]) -> List[Dict]:
     """Drops chunks whose document is not in `docs`, so a deleted document stops being cited before the rebuild
-    finishes (spec 0008, AC-8). `docs` None means there is nothing to compare with."""
+    finishes. `docs` None means there is nothing to compare with."""
     if docs is None:
         return candidates
     docs = set(docs)
@@ -39,7 +39,7 @@ def rerank_text(text: str) -> str:
     """What the cross-encoder reads: Markdown table pipes become spaces and separator rows go.
 
     ms-marco models score a pipe grid as noise, so correct table chunks fell under the
-    confidence gate (spec 0004). The chunk itself, which the LLM reads, stays Markdown.
+    confidence gate. The chunk itself, which the LLM reads, stays Markdown.
     """
     lines = []
     for line in text.splitlines():
@@ -53,7 +53,7 @@ def rerank_text(text: str) -> str:
 
 def gate(ranked: List[Dict], threshold: float, top_k: int) -> Tuple[List[str], float, List[Dict]]:
     """The gate over reranked `{chunk, score, metadata}` (best first): the top top_k chunks that score at least the
-    threshold, the top score, and each kept chunk's id, source, page, kind and score (spec 0006)."""
+    threshold, the top score, and each kept chunk's id, source, page, kind and score."""
     valid_chunks, details = [], []
     highest_score = 0.0
     for i, res in enumerate(ranked[:top_k]):

@@ -1,6 +1,7 @@
-"""V-RAG PDF reader (spec 0009, build task 7): the live demo sends a visitor's upload here; this Space reads it with
+"""V-RAG PDF reader: the live demo sends a visitor's upload here; this Space reads it with
 the pipeline's own ingestion code (layoutlmv3 tables, Qwen2.5 VL 3B figures) and returns the chunks, which the
-visitor's browser embeds and indexes. Files are deleted right after reading; the log keeps only name, pages, time."""
+visitor's browser embeds and indexes. Files are deleted right after reading; the log keeps only a short hash of the
+name, the page count and the time."""
 import os
 import time
 
@@ -46,11 +47,12 @@ def parse_document(file: str, request: gr.Request) -> dict:
         chunks = read_pdf(folder, pages) if pages is not None else reader.read(folder)   # text needs no GPU
         cap.record(ip)
         seconds = round(time.perf_counter() - started, 1)
-        print(f"[reader] {name}: {pages or 0} pages, {len(chunks)} chunks, {seconds} s (client from {source})")
+        print(f"[reader] {reader.log_name(name)}: {pages or 0} pages, {len(chunks)} chunks, {seconds} s "
+              f"(client from {source})")
         return {"document": name, "pages": pages, "chunks": chunks, "seconds": seconds,
                 "readers": {"tables": tables.effective_parser(), "figures": figures.effective_parser()}}
     except UploadRefused as e:
-        print(f"[reader] {name}: refused ({e.code})")
+        print(f"[reader] {reader.log_name(name)}: refused ({e.code})")
         raise gr.Error(f"{e.code}: {e.message}")
     finally:
         reader.discard(folder, file)

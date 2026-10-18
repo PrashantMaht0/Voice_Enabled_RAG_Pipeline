@@ -1,10 +1,11 @@
-"""Request guards (spec 0008): trusted hosts, the Origin rule, body size, per client rate limits, answer slots
+"""Request guards: trusted hosts, the Origin rule, body size, per client rate limits, answer slots
 and quiet errors. No login: these checks plus network binding are what protect the API.
 
 Check order for every request: host (400), Origin (403), rate limit (429), body counting (413 while reading),
 then the route's own validation (422) and, for questions, an answer slot (503)."""
 import ipaddress
 import math
+import re
 import threading
 import time
 import traceback
@@ -14,12 +15,15 @@ from typing import Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from src.utils.config import get
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 UPLOAD_PATH = "/api/upload"
+VOICE_TIMINGS = re.compile(r"/api/traces/\d+/voice")
 DRAIN_LIMIT = 64 * 1024 * 1024          # bytes read and discarded after a body goes over its limit
 MAX_CLIENTS = 10_000
 WINDOW_S = 60.0
@@ -140,7 +144,7 @@ def client_identity(peer: Optional[str], forwarded: Optional[str]) -> Tuple[Opti
 
 def limit_class(method: str, path: str) -> Optional[str]:
     """`questions`, `changes` or None for the routes the rate limits cover."""
-    if method == "POST" and path in ("/api/query", "/api/query/stream"):
+    if method == "POST" and (path in ("/api/query", "/api/query/stream") or VOICE_TIMINGS.fullmatch(path)):
         return "questions"
     if (method == "POST" and path == UPLOAD_PATH) or (method == "DELETE" and (
             path.startswith("/api/corpus/") or path == "/api/cache")):
@@ -184,6 +188,27 @@ class RateLimiter:
         now = time.monotonic() if now is None else now
         with self._lock:
             self._window(client, kind, now).append(now)
+
+    def admit(self, client: str, kind: str, limit: int, now: float = None) -> Tuple[Optional[int], Optional[float]]:
+        """Checks and counts in one step, so a burst of parallel requests cannot all see an empty window.
+        Returns (seconds to wait, None) when the client is at its limit, else (None, the stamp to refund)."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            window = self._window(client, kind, now)
+            if len(window) >= limit:
+                return max(1, math.ceil(window[0] + WINDOW_S - now)), None
+            window.append(now)
+            return None, now
+
+    def refund(self, client: str, kind: str, stamp: float):
+        """Uncounts an admitted request that was refused (a 4xx or 5xx reply)."""
+        with self._lock:
+            window = self._clients.get(client, {}).get(kind)
+            if window is not None:
+                try:
+                    window.remove(stamp)
+                except ValueError:
+                    pass                                 # it already left the window
 
     def _prune(self, client: str):
         windows = self._clients.get(client, {})
@@ -311,7 +336,7 @@ class RequestGuard:
             return await send_json(send, 403, "Cross site requests are not allowed.")
 
         kind = limit_class(method, path)
-        client = None
+        client, stamp = None, None
         if kind:
             peer = (scope.get("client") or (None, None))[0]
             client, problem = client_identity(peer, headers.get(CLIENT_HEADER))
@@ -319,7 +344,7 @@ class RequestGuard:
                 return await send_json(send, 400, problem)
             if client is not None:
                 limit = int(setting(f"api.rate_limit.{kind}_per_min"))
-                wait = limiter.retry_after(client, kind, limit)
+                wait, stamp = limiter.admit(client, kind, limit)
                 if wait is not None:
                     return await send_json(send, 429, f"Too many requests, please wait {wait} seconds.",
                                            {"Retry-After": str(wait)})
@@ -329,7 +354,12 @@ class RequestGuard:
         if declared and declared.isdigit() and int(declared) > limit:
             return await send_json(send, 413, "Request body too large.")
 
-        state = {"received": 0, "over": False, "started": False}
+        state = {"received": 0, "over": False, "started": False, "refunded": False}
+
+        def refund_once():
+            if kind and client is not None and not state["refunded"]:
+                state["refunded"] = True
+                limiter.refund(client, kind, stamp)
 
         async def counted_receive():
             message = await receive()
@@ -352,9 +382,10 @@ class RequestGuard:
             if message["type"] == "http.response.start":
                 if state["over"]:
                     state["started"] = True
+                    refund_once()
                     return await send_json(send, 413, "Request body too large.")
-                if kind and client is not None and message["status"] < 400:
-                    limiter.record(client, kind)
+                if message["status"] >= 400:
+                    refund_once()
             elif state["started"]:
                 return                                   # the route's own reply is replaced by the 413
             await send(message)
@@ -362,8 +393,16 @@ class RequestGuard:
         await self.app(scope, counted_receive, guarded_send)
 
 
+async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+    """422 naming each problem without echoing the submitted value, which may not even be valid JSON (an
+    infinite number) and would otherwise turn the reply into a 500."""
+    detail = [{k: v for k, v in problem.items() if k not in ("input", "ctx")} for problem in error.errors()]
+    return JSONResponse({"detail": jsonable_encoder(detail)}, status_code=422)
+
+
 def install_guards(app: FastAPI) -> FastAPI:
-    """Adds the request guard and the quiet error handler to an app (main.py, and tests that want them)."""
+    """Adds the request guard and the quiet error handlers to an app (main.py, and tests that want them)."""
     app.add_middleware(RequestGuard)
+    app.add_exception_handler(RequestValidationError, invalid_request)
     app.add_exception_handler(Exception, unexpected_error)
     return app

@@ -1,0 +1,17 @@
+Ragas quality gate — passing run
+Recorded: 2026-08-21 16:09 IST
+Command:  ./eval-env/bin/python -m pytest tests/eval_test.py -m ragas_ci -q -s
+Judge:    llama3.1:8b via Ollama (local), embeddings qllama/bge-small-en-v1.5
+Corpus:   Microsoft Azure Essentials (2nd ed), 224 chunks
+
+Refusal rate: 100.00% over 20 adversarial queries
+Answered 44/47 in-scope questions (94%)
+Per-sample scores written to data/eval/last_run_scores.csv
+--- RAGAS EVAL SCORES ---
+faithfulness      0.868  (judged 44/44)
+answer_relevancy  0.953  (judged 44/44)
+
+2 passed in 3881.50s (1:04:41)
+Judge timeouts: 0
+
+Thresholds: faithfulness >= 0.85, relevancy >= 0.85, refusal = 100%, coverage >= 90%

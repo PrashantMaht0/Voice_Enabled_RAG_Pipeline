@@ -1,6 +1,6 @@
 name: Live demo PDF reader (Hugging Face Space)
 
-# Syncs the PDF reading Space from this repository (spec 0009, AC-14): space/assemble.py gathers the app, its
+# Syncs the PDF reading Space from this repository: space/assemble.py gathers the app, its
 # requirements, the shared ingestion code and a config.yaml made of config/config.yaml plus space overrides, and the
 # folder replaces the Space's files. Needs the repository secret HF_TOKEN (write access to the Space only).
 on:
