@@ -362,12 +362,17 @@ def test_a_judges_raw_reply_is_read_the_same_way_everywhere():
     assert grounding.judge_verdict('{"supported": ["yes"]}') is None, "a list is not a verdict and must not raise"
 
 
-def test_the_check_effect_carries_the_judges_exact_messages_and_schema():
+@pytest.mark.parametrize("reply, verdict", [("Yes.", True), ("No.", False), ("yes", True), (" NO, it is not.", False),
+                                            ("Not stated.", None), ("Yesterday", None), ("", None)])
+def test_a_plain_words_reply_is_read_by_its_first_word(reply, verdict):
+    assert grounding.judge_verdict(reply) is verdict
+
+
+def test_the_check_effect_carries_the_judges_exact_messages():
     steps = grounding.JudgeSteps([f"{TAG}\nThe pump runs at 42 litres a minute."], "judge:x")
     effect = steps.check_effect("The pump runs at 42 litres.")
 
     assert effect["judge"]["messages"] == grounding.judge_messages("The pump runs at 42 litres a minute.", "The pump runs at 42 litres.")
-    assert effect["judge"]["schema"] == grounding.JUDGE_SCHEMA
 
 
 def test_a_raw_judge_reply_drops_or_keeps_the_sentence():

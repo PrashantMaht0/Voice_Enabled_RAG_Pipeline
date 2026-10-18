@@ -13,16 +13,10 @@ export type Question = { query: string; history: { role: string; content: string
                          channel?: "typed" | "voice" };
 type Handlers = { onEvent: (event: Event) => void; onSpan: (span: Span) => void };
 
-const JUDGE_MAX_TOKENS = 20;      // as the server's judge (num_predict 20)
-
-/** A grammar allowing only the compact JSON the judge schema describes, e.g. {"supported": "yes"}. WebLLM compiles
- *  JSON schemas with whitespace allowed anywhere, and the 1B can fill its whole reply with newlines after the value
- *  (finish reason "length", an unreadable verdict; seen 2026-10-17). Ollama's own schema output is compact. */
-export function compactJsonGrammar(schema: { required: string[]; properties: Record<string, { enum: string[] }> }): string {
-  const q = (text: string) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  const pairs = schema.required.map(key => `${q(`"${key}": `)} (${schema.properties[key].enum.map(v => q(`"${v}"`)).join(" | ")})`);
-  return `root ::= "{" ${pairs.join(` ${q(", ")} `)} "}"`;
-}
+// The judge answers in plain words ("Yes." or "No."), read by its first word. Forcing a JSON reply made this 4 bit
+// WebLLM build say yes to nearly everything: on 147 test sentences it caught 0 of 83 unsupported ones, against 9 in
+// plain words, with 1 and 2 of 54 supported ones dropped (2026-10-18).
+const JUDGE_MAX_TOKENS = 4;
 
 export class Driver {
   private stream: AsyncIterator<any> | null = null;
@@ -108,7 +102,6 @@ export class Driver {
         try {
           const reply = await this.judge.chat.completions.create({
             messages: effect.judge.messages, temperature: 0, max_tokens: JUDGE_MAX_TOKENS, stream: false,
-            response_format: { type: "grammar", grammar: compactJsonGrammar(effect.judge.schema) },
           });
           return { reply: reply.choices[0]?.message?.content ?? "" };
         } catch (error) {

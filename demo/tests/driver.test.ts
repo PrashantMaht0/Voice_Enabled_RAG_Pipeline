@@ -1,13 +1,31 @@
-// The browser driver with fake workers and engines: the judge's grammar, and Stop while an effect is running.
+// The browser driver with fake workers and engines: how the judge is asked, and Stop while an effect is running.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Driver, compactJsonGrammar } from "../src/pipeline/driver.ts";
+import { Driver } from "../src/pipeline/driver.ts";
 
 const settings = { temperature: 0, top_p: 0.1, max_tokens: 256 };
 
-test("the judge grammar allows only the compact JSON the schema describes", () => {
-  const schema = { required: ["supported"], properties: { supported: { enum: ["yes", "no"] } } };
-  assert.equal(compactJsonGrammar(schema), 'root ::= "{" "\\"supported\\": " ("\\"yes\\"" | "\\"no\\"") "}"');
+test("the judge is asked in plain words, without a forced reply format, and its reply goes back to the core", async () => {
+  const requests: any[] = [];
+  const messages = [{ role: "user", content: "Context: ... Statement: ... Answer yes or no." }];
+  const python = {
+    call: async (op: string, args: any) => op === "start"
+      ? JSON.stringify({ effect: "CheckSentence", judge: { messages } })
+      : JSON.stringify({ end: true, record: { reply: JSON.parse(args.result) } }),
+  };
+  const driver = new Driver(python as any, {} as any, {} as any, settings);
+  driver.checkProblem = null;
+  driver.judge = { chat: { completions: { create: async (request: any) => {
+    requests.push(request);
+    return { choices: [{ message: { content: "Yes." } }] };
+  } } } } as any;
+
+  const record = await driver.ask({ query: "q", history: [], docs: null, grounding: true }, { onEvent: () => undefined, onSpan: () => undefined });
+
+  assert.equal(requests[0].response_format, undefined);
+  assert.equal(requests[0].temperature, 0);
+  assert.deepEqual(requests[0].messages, messages);
+  assert.deepEqual(record, { reply: { reply: "Yes." } });
 });
 
 test("Stop during an effect ends the question without asking Python for another step", async () => {
