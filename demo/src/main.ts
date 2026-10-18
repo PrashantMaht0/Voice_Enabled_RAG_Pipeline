@@ -176,10 +176,11 @@ async function loadModels() {
 
   // Every worker this attempt starts, so a failed attempt frees its GPU memory before the visitor tries again
   const workers: Worker[] = [];
-  const spawn = (url: URL) => { const worker = new Worker(url, { type: "module" }); workers.push(worker); return worker; };
+  // Each new Worker(new URL(...)) stays written out in full: that is the form Vite recognises and bundles
+  const track = (worker: Worker) => { workers.push(worker); return worker; };
   let failed = false;
-  const python = new WorkerRpc(spawn(new URL("./pipeline/pyodide.worker.ts", import.meta.url)));
-  const models = new WorkerRpc(spawn(new URL("./models/models.worker.ts", import.meta.url)));
+  const python = new WorkerRpc(track(new Worker(new URL("./pipeline/pyodide.worker.ts", import.meta.url), { type: "module" })));
+  const models = new WorkerRpc(track(new Worker(new URL("./models/models.worker.ts", import.meta.url), { type: "module" })));
 
   // WebLLM is imported only now, so the page itself stays small before Load
   const { CreateWebWorkerMLCEngine, prebuiltAppConfig } = await import("@mlc-ai/web-llm");
@@ -192,7 +193,7 @@ async function loadModels() {
   const appConfig = { ...prebuiltAppConfig, model_list: [pinned(choice.id, choice.revision)]
     .concat(judge.id === choice.id ? [] : [pinned(judge.id, judge.revision)]) };
   const answer = CreateWebWorkerMLCEngine(
-    spawn(new URL("./models/llm.worker.ts", import.meta.url)), choice.id,
+    track(new Worker(new URL("./models/llm.worker.ts", import.meta.url), { type: "module" })), choice.id,
     { appConfig, initProgressCallback: (p) => answerRow.update(p.progress, p.text) },
   ).then(engine => { answerRow.update(1, "ready"); return engine; },
          error => { answerRow.fail(String(error)); throw error; });
@@ -211,7 +212,7 @@ async function loadModels() {
     if (state.driver) { state.driver.judge = engine; state.driver.checkProblem = problem; }
   };
   const judgeWorker = () => {
-    const worker = spawn(new URL("./models/llm.worker.ts", import.meta.url));
+    const worker = track(new Worker(new URL("./models/llm.worker.ts", import.meta.url), { type: "module" }));
     worker.postMessage({ prefixCache: JUDGE_PREFIX_MARKER });
     return worker;
   };
