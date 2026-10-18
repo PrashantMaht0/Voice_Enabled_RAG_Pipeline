@@ -175,12 +175,14 @@ def judge_messages(context: str, sentence: str) -> List[dict]:
 
 
 def judge_verdict(reply: str) -> Optional[bool]:
-    """The judge's JSON reply as yes (True), no (False), or None for a reply that is neither."""
+    """The judge's reply as yes (True), no (False), or None for a reply that is neither. The server's judge answers
+    in JSON (`{"supported": "yes"}`); the browser's answers in plain words ("Yes."), its first word deciding."""
     import json
     try:
         answer = json.loads(reply or "").get("supported")
     except (ValueError, AttributeError):
-        return None
+        words = re.match(r"\W*(yes|no)\b", reply or "", re.I)
+        answer = words.group(1).lower() if words else None
     return {"yes": True, "no": False}.get(answer) if isinstance(answer, str) else None
 
 
@@ -405,7 +407,7 @@ class JudgeSteps:
         if self._evidence is None:
             self._evidence = "\n\n".join(chunk_body(c) for c in self.chunks)
         return {"effect": "CheckSentence", "sentence": sentence, "context": self._evidence,
-                "judge": {"messages": judge_messages(self._evidence, sentence), "schema": JUDGE_SCHEMA}}
+                "judge": {"messages": judge_messages(self._evidence, sentence)}}
 
     def _check(self, sentence: str):
         """One sentence's verdict; a checker error or timeout fails open for the rest of this answer."""
