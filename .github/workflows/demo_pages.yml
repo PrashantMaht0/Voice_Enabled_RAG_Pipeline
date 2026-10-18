@@ -64,6 +64,8 @@ jobs:
           npm ci
           npm test
           npm run build
+          # A worker Vite did not recognise ships as raw TypeScript, which Pages serves as video/mp2t
+          if ls dist/assets/*.ts >/dev/null 2>&1; then echo "Raw .ts files in dist/assets:"; ls dist/assets/*.ts; exit 1; fi
 
       - uses: actions/upload-pages-artifact@v3
         with:
